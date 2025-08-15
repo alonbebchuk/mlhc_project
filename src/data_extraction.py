@@ -35,6 +35,7 @@ def load_metadata(meta_path: str) -> pd.DataFrame:
 
 def query_base_admissions(con, subject_ids: List[int]) -> pd.DataFrame:
     """Query admissions and patients (minimal base without ICU join)."""
+    con.register("tmp_subject_ids", pd.DataFrame({"subject_id": subject_ids}))
     sql = f"""
     SELECT a.subject_id::INTEGER AS subject_id,
            a.hadm_id::INTEGER AS hadm_id,
@@ -48,16 +49,16 @@ def query_base_admissions(con, subject_ids: List[int]) -> pd.DataFrame:
            a.marital_status AS marital_status,
            a.ethnicity AS ethnicity,
            a.edregtime::TIMESTAMP AS edregtime,
-            #    a.diagnosis AS diagnosis,
+            --    a.diagnosis AS diagnosis,
            a.has_chartevents_data::INTEGER AS has_chartevents_data,
            p.gender AS gender,
            p.dob::TIMESTAMP AS dob,
            p.dod::TIMESTAMP AS dod
     FROM admissions a
     JOIN patients p ON a.subject_id = p.subject_id
-    WHERE a.subject_id::INTEGER IN ?
+    WHERE a.subject_id::INTEGER IN (SELECT subject_id FROM tmp_subject_ids)
     """
-    df = con.execute(sql, [subject_ids]).fetchdf()
+    df = con.execute(sql).fetchdf()
     return df
 
 
@@ -235,16 +236,17 @@ def create_cohort_and_targets(adm_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
 
 def add_first_icu_intime(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
     """Add first ICU intime within 48h to cohort."""
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     sql = f"""
     SELECT i.hadm_id::INTEGER AS hadm_id,
            MIN(i.intime)::TIMESTAMP AS first_icu_intime
     FROM icustays i
     JOIN admissions a ON i.hadm_id = a.hadm_id
-    WHERE i.hadm_id::INTEGER IN ?
+    WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND i.intime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     GROUP BY i.hadm_id
     """
-    icu = con.execute(sql, [hadm_ids]).fetchdf()
+    icu = con.execute(sql).fetchdf()
 
     cohort_df = cohort_df.merge(icu, on="hadm_id", how="left")
     return cohort_df
@@ -256,6 +258,8 @@ def add_first_height(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
     height_cm_itemids = [3485, 4188]
     height_itemids = height_in_itemids + height_cm_itemids
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    con.register("tmp_height_itemids", pd.DataFrame({"itemid": height_itemids}))
     sql_h = f"""
     SELECT c.hadm_id::INTEGER AS hadm_id,
            c.charttime::TIMESTAMP AS charttime,
@@ -263,13 +267,13 @@ def add_first_height(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
            c.valuenum::DOUBLE AS valuenum
     FROM chartevents c
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
-    WHERE c.hadm_id::INTEGER IN ?
-      AND c.itemid::INTEGER IN ?
+    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_itemids)
       AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
-    h = con.execute(sql_h, [hadm_ids, height_itemids]).fetchdf()
+    h = con.execute(sql_h).fetchdf()
 
     h["height_cm"] = h.apply(
         lambda r: float(r["valuenum"]) * 2.54 if int(r["itemid"]) in height_in_itemids else float(r["valuenum"]),
@@ -287,6 +291,8 @@ def add_first_weight(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
     weight_lb_itemids = [3581, 226531]
     weight_itemids = weight_kg_itemids + weight_lb_itemids
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    con.register("tmp_weight_itemids", pd.DataFrame({"itemid": weight_itemids}))
     sql_w = f"""
     SELECT c.hadm_id::INTEGER AS hadm_id,
            c.charttime::TIMESTAMP AS charttime,
@@ -294,13 +300,13 @@ def add_first_weight(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
            c.valuenum::DOUBLE AS valuenum
     FROM chartevents c
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
-    WHERE c.hadm_id::INTEGER IN ?
-      AND c.itemid::INTEGER IN ?
+    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_itemids)
       AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
-    w = con.execute(sql_w, [hadm_ids, weight_itemids]).fetchdf()
+    w = con.execute(sql_w).fetchdf()
 
     w["weight_kg"] = w.apply(
         lambda r: float(r["valuenum"]) * 0.45359237 if int(r["itemid"]) in weight_lb_itemids else float(r["valuenum"]),
@@ -316,24 +322,26 @@ def add_received_vasopressor_flag(con, hadm_ids: List[int], cohort_df: pd.DataFr
     """Add 0/1 flag 'received_vasopressor' based on INPUTEVENTS within 48h of admission."""
     vaso_itemids = [221906, 30047, 30120, 221289, 30044, 30119, 30309, 221749, 30127, 30128, 221662, 30043, 30307, 222315, 30051, 30042, 30306]
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    con.register("tmp_vaso_itemids", pd.DataFrame({"itemid": vaso_itemids}))
     sql_cv = f"""
     SELECT ie.hadm_id::INTEGER AS hadm_id
     FROM inputevents_cv ie
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN ?
-      AND ie.itemid::INTEGER IN ?
+    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_itemids)
       AND ie.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
     sql_mv = f"""
     SELECT ie.hadm_id::INTEGER AS hadm_id
     FROM inputevents_mv ie
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN ?
-      AND ie.itemid::INTEGER IN ?
+    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_itemids)
       AND ie.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
-    cv = con.execute(sql_cv, [hadm_ids, vaso_itemids]).fetchdf()
-    mv = con.execute(sql_mv, [hadm_ids, vaso_itemids]).fetchdf()
+    cv = con.execute(sql_cv).fetchdf()
+    mv = con.execute(sql_mv).fetchdf()
     both = pd.concat([cv, mv], ignore_index=True)
 
     flag = both.groupby("hadm_id").size().gt(0).astype(int).rename("received_vasopressor").reset_index()
@@ -347,24 +355,26 @@ def add_received_sedation_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame
     """Add 0/1 flag 'received_sedation' based on INPUTEVENTS within 48h of admission."""
     sed_itemids = [222168, 30131, 221668, 30124, 221744, 225972, 225942, 30150, 30308, 30118, 30149, 225150]
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    con.register("tmp_sed_itemids", pd.DataFrame({"itemid": sed_itemids}))
     sql_cv = f"""
     SELECT ie.hadm_id::INTEGER AS hadm_id
     FROM inputevents_cv ie
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN ?
-      AND ie.itemid::INTEGER IN ?
+    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_itemids)
       AND ie.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
     sql_mv = f"""
     SELECT ie.hadm_id::INTEGER AS hadm_id
     FROM inputevents_mv ie
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN ?
-      AND ie.itemid::INTEGER IN ?
+    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_itemids)
       AND ie.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
-    cv = con.execute(sql_cv, [hadm_ids, sed_itemids]).fetchdf()
-    mv = con.execute(sql_mv, [hadm_ids, sed_itemids]).fetchdf()
+    cv = con.execute(sql_cv).fetchdf()
+    mv = con.execute(sql_mv).fetchdf()
     both = pd.concat([cv, mv], ignore_index=True)
 
     flag = both.groupby("hadm_id").size().gt(0).astype(int).rename("received_sedation").reset_index()
@@ -379,14 +389,15 @@ def add_received_antibiotic_flag(con, hadm_ids: List[int], cohort_df: pd.DataFra
     ab_keywords = ["vancomycin", "zosyn", "piperacillin", "tazobactam", "cefepime", "meropenem", "levofloxacin", "azithromycin", "ceftriaxone", "metronidazole"]
     pattern = "|".join(ab_keywords)
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     sql_rx = f"""
     SELECT p.hadm_id::INTEGER AS hadm_id, LOWER(COALESCE(p.drug, '')) AS drug
     FROM prescriptions p
     JOIN admissions a ON p.hadm_id = a.hadm_id AND p.subject_id = a.subject_id
-    WHERE p.hadm_id::INTEGER IN ?
+    WHERE p.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND p.startdate BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
-    rx = con.execute(sql_rx, [hadm_ids]).fetchdf()
+    rx = con.execute(sql_rx).fetchdf()
 
     drugs = rx["drug"].astype(str)
     rx = rx.loc[drugs.str.contains(pattern, case=False, regex=True)]
@@ -405,16 +416,18 @@ def add_was_mechanically_ventilated_flag(con, hadm_ids: List[int], cohort_df: pd
     oxygen_device_itemids = [467, 223848]
     vent_itemids = vent_setting_itemids + peep_itemids + tv_itemids + oxygen_device_itemids
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    con.register("tmp_vent_itemids", pd.DataFrame({"itemid": vent_itemids}))
     sql_vent = f"""
     SELECT c.hadm_id::INTEGER AS hadm_id, c.itemid::INTEGER AS itemid, LOWER(COALESCE(c.value, '')) AS value
     FROM chartevents c
     JOIN admissions a ON c.hadm_id = a.hadm_id AND c.subject_id = a.subject_id
-    WHERE c.hadm_id::INTEGER IN ?
-      AND c.itemid::INTEGER IN ?
+    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_vent_itemids)
       AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
       AND c.error::INTEGER == 0
     """
-    vent = con.execute(sql_vent, [hadm_ids, vent_itemids]).fetchdf()
+    vent = con.execute(sql_vent).fetchdf()
 
     has_setting = vent[vent["itemid"].isin(vent_setting_itemids + peep_itemids + tv_itemids)]
     ox = vent[vent["itemid"].isin(oxygen_device_itemids)]
@@ -436,25 +449,28 @@ def add_received_rrt_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> 
     """Add 0/1 flag 'received_rrt' based on PROCEDUREEVENTS_MV/CHARTEVENTS within 48h of admission."""
     rrt_proc_itemids = [225802, 225803, 225441]
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    con.register("tmp_rrt_proc_itemids", pd.DataFrame({"itemid": rrt_proc_itemids}))
     sql_rrt_proc = f"""
     SELECT p.hadm_id::INTEGER AS hadm_id
     FROM procedureevents_mv p
     JOIN admissions a ON p.hadm_id = a.hadm_id AND p.subject_id = a.subject_id
-    WHERE p.hadm_id::INTEGER IN ?
-      AND p.itemid::INTEGER IN ?
+    WHERE p.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND p.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_proc_itemids)
       AND p.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
+    con.register("tmp_rrt_chart_itemids", pd.DataFrame({"itemid": [152]}))
     sql_rrt_chart = f"""
     SELECT c.hadm_id::INTEGER AS hadm_id
     FROM chartevents c
     JOIN admissions a ON c.hadm_id = a.hadm_id AND c.subject_id = a.subject_id
-    WHERE c.hadm_id::INTEGER IN ?
-      AND c.itemid::INTEGER IN ?
+    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_chart_itemids)
       AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
       AND c.error::INTEGER == 0
     """
-    rrt_proc = con.execute(sql_rrt_proc, [hadm_ids, rrt_proc_itemids]).fetchdf()
-    rrt_chart = con.execute(sql_rrt_chart, [hadm_ids, [152]]).fetchdf()
+    rrt_proc = con.execute(sql_rrt_proc).fetchdf()
+    rrt_chart = con.execute(sql_rrt_chart).fetchdf()
     rrt = pd.concat([rrt_proc, rrt_chart], ignore_index=True)
 
     flag = rrt.groupby("hadm_id").size().gt(0).astype(int).rename("received_rrt").reset_index()
@@ -467,16 +483,17 @@ def add_received_rrt_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> 
 def add_positive_blood_culture_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
     """Add 0/1 flag 'positive_blood_culture' from MICROBIOLOGYEVENTS within 48h of admission."""
 
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     sql_micro = f"""
     SELECT m.hadm_id::INTEGER AS hadm_id
     FROM microbiologyevents m
     JOIN admissions a ON m.hadm_id = a.hadm_id AND m.subject_id = a.subject_id
-    WHERE m.hadm_id::INTEGER IN ?
+    WHERE m.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND LOWER(COALESCE(m.spec_type_desc, '')) LIKE '%blood culture%'
       AND m.org_name IS NOT NULL
       AND m.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
     """
-    micro = con.execute(sql_micro, [hadm_ids]).fetchdf()
+    micro = con.execute(sql_micro).fetchdf()
 
     flag = micro.groupby("hadm_id").size().gt(0).astype(int).rename("positive_blood_culture").reset_index()
 
@@ -490,6 +507,8 @@ def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame
     meta = load_metadata(labs_meta_csv)
     itemids = meta["itemid"].tolist()
 
+    con.register("tmp_lab_itemids", pd.DataFrame({"itemid": itemids}))
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     sql = f"""
     SELECT l.subject_id::INTEGER AS subject_id,
            l.hadm_id::INTEGER AS hadm_id,
@@ -498,12 +517,12 @@ def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame
            l.valuenum::DOUBLE AS valuenum
     FROM labevents l
     JOIN admissions a ON l.subject_id = a.subject_id AND l.hadm_id = a.hadm_id
-    WHERE l.itemid::INTEGER IN ?
-      AND l.hadm_id::INTEGER IN ?
+    WHERE l.itemid::INTEGER IN (SELECT itemid FROM tmp_lab_itemids)
+      AND l.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND l.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
       AND l.valuenum IS NOT NULL
     """
-    df = con.execute(sql, [itemids, hadm_ids]).fetchdf()
+    df = con.execute(sql).fetchdf()
 
     df = df.merge(meta, on="itemid")
     mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
@@ -517,6 +536,8 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
     meta = load_metadata(vitals_meta_csv)
     itemids = meta["itemid"].tolist()
 
+    con.register("tmp_vital_itemids", pd.DataFrame({"itemid": itemids}))
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     sql = f"""
     SELECT c.subject_id::INTEGER AS subject_id,
            c.hadm_id::INTEGER AS hadm_id,
@@ -525,13 +546,13 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
            c.valuenum::DOUBLE AS valuenum
     FROM chartevents c
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
-    WHERE c.itemid::INTEGER IN ?
-      AND c.hadm_id::INTEGER IN ?
+    WHERE c.itemid::INTEGER IN (SELECT itemid FROM tmp_vital_itemids)
+      AND c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
-    df = con.execute(sql, [itemids, hadm_ids]).fetchdf()
+    df = con.execute(sql).fetchdf()
 
     df = df.merge(meta, on="itemid")
     mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
