@@ -1,4 +1,13 @@
+import duckdb
+import io
+import os
+import pickle
 import pandas as pd
+from pathlib import Path
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 from typing import Dict, List, Tuple
 
 
@@ -14,6 +23,8 @@ MORTALITY_WINDOW_DAYS: int = 30
 
 SECONDS_PER_HOUR = 60 * 60
 SECONDS_PER_YEAR = 365 * 24 * SECONDS_PER_HOUR
+
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 
 def load_initial_subjects(path: str) -> List[int]:
@@ -243,7 +254,7 @@ def add_first_icu_intime(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> p
     FROM icustays i
     JOIN admissions a ON i.hadm_id = a.hadm_id
     WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND i.intime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND i.intime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     GROUP BY i.hadm_id
     """
     icu = con.execute(sql).fetchdf()
@@ -269,7 +280,7 @@ def add_first_height(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
     WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_itemids)
-      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
@@ -302,7 +313,7 @@ def add_first_weight(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
     WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_itemids)
-      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
@@ -330,7 +341,7 @@ def add_received_vasopressor_flag(con, hadm_ids: List[int], cohort_df: pd.DataFr
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
     WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_itemids)
-      AND ie.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND ie.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     sql_mv = f"""
     SELECT ie.hadm_id::INTEGER AS hadm_id
@@ -338,7 +349,7 @@ def add_received_vasopressor_flag(con, hadm_ids: List[int], cohort_df: pd.DataFr
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
     WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_itemids)
-      AND ie.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND ie.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     cv = con.execute(sql_cv).fetchdf()
     mv = con.execute(sql_mv).fetchdf()
@@ -363,7 +374,7 @@ def add_received_sedation_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
     WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_itemids)
-      AND ie.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND ie.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     sql_mv = f"""
     SELECT ie.hadm_id::INTEGER AS hadm_id
@@ -371,7 +382,7 @@ def add_received_sedation_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame
     JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
     WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_itemids)
-      AND ie.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND ie.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     cv = con.execute(sql_cv).fetchdf()
     mv = con.execute(sql_mv).fetchdf()
@@ -395,7 +406,7 @@ def add_received_antibiotic_flag(con, hadm_ids: List[int], cohort_df: pd.DataFra
     FROM prescriptions p
     JOIN admissions a ON p.hadm_id = a.hadm_id AND p.subject_id = a.subject_id
     WHERE p.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND p.startdate BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND p.startdate BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     rx = con.execute(sql_rx).fetchdf()
 
@@ -424,7 +435,7 @@ def add_was_mechanically_ventilated_flag(con, hadm_ids: List[int], cohort_df: pd
     JOIN admissions a ON c.hadm_id = a.hadm_id AND c.subject_id = a.subject_id
     WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_vent_itemids)
-      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
       AND c.error::INTEGER == 0
     """
     vent = con.execute(sql_vent).fetchdf()
@@ -457,7 +468,7 @@ def add_received_rrt_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> 
     JOIN admissions a ON p.hadm_id = a.hadm_id AND p.subject_id = a.subject_id
     WHERE p.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND p.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_proc_itemids)
-      AND p.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND p.starttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     con.register("tmp_rrt_chart_itemids", pd.DataFrame({"itemid": [152]}))
     sql_rrt_chart = f"""
@@ -466,7 +477,7 @@ def add_received_rrt_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> 
     JOIN admissions a ON c.hadm_id = a.hadm_id AND c.subject_id = a.subject_id
     WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_chart_itemids)
-      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
       AND c.error::INTEGER == 0
     """
     rrt_proc = con.execute(sql_rrt_proc).fetchdf()
@@ -491,7 +502,7 @@ def add_positive_blood_culture_flag(con, hadm_ids: List[int], cohort_df: pd.Data
     WHERE m.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
       AND LOWER(COALESCE(m.spec_type_desc, '')) LIKE '%blood culture%'
       AND m.org_name IS NOT NULL
-      AND m.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND m.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
     """
     micro = con.execute(sql_micro).fetchdf()
 
@@ -519,7 +530,7 @@ def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame
     JOIN admissions a ON l.subject_id = a.subject_id AND l.hadm_id = a.hadm_id
     WHERE l.itemid::INTEGER IN (SELECT itemid FROM tmp_lab_itemids)
       AND l.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND l.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND l.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
       AND l.valuenum IS NOT NULL
     """
     df = con.execute(sql).fetchdf()
@@ -548,7 +559,7 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
     WHERE c.itemid::INTEGER IN (SELECT itemid FROM tmp_vital_itemids)
       AND c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOUR
+      AND c.charttime BETWEEN a.admittime AND a.admittime + INTERVAL {WINDOW_HOURS} HOURS
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
@@ -589,3 +600,185 @@ def extract_raw(con, initial_cohort_csv: str, labs_csv: str, vitals_csv: str) ->
         "vitals": vitals,
         "targets": targets,
     }
+
+
+def setup_google_drive_access():
+    """Set up Google Drive API access with local authentication."""
+    project_root = Path(__file__).parent.parent
+    token_path = project_root / 'token.pickle'
+    credentials_path = project_root / 'credentials.json'
+
+    creds = None
+    if token_path.exists():
+        with open(token_path, 'rb') as token:
+            creds = pickle.load(token)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(token_path, 'wb') as token:
+            pickle.dump(creds, token)
+
+    return build('drive', 'v3', credentials=creds)
+
+
+def find_mimic_folder(drive_service):
+    """Find the MIMIC-III folder in Google Drive."""
+    results = drive_service.files().list(
+        q=f"name='MIMIC-III' and mimeType='application/vnd.google-apps.folder'",
+        fields="files(id, name)"
+    ).execute()
+
+    folders = results.get('files', [])
+
+    return folders[0]['id']
+
+
+def list_files_in_folder(drive_service, folder_id):
+    """List all files in a Google Drive folder for debugging."""
+    print(f"Listing files in folder (ID: {folder_id}):")
+    results = drive_service.files().list(
+        q=f"parents in '{folder_id}'",
+        fields="files(id, name, mimeType, size, modifiedTime)"
+    ).execute()
+
+    files = results.get('files', [])
+
+    for file_info in files:
+        name = file_info.get('name', 'Unknown')
+        mime_type = file_info.get('mimeType', 'Unknown')
+        size = file_info.get('size', 'Unknown')
+        modified = file_info.get('modifiedTime', 'Unknown')
+        file_id = file_info.get('id', 'Unknown')
+
+        print(f"  - {name}")
+        print(f"    MIME: {mime_type}")
+        print(f"    Size: {size} bytes")
+        print(f"    Modified: {modified}")
+        print(f"    ID: {file_id}")
+        print()
+
+    return files
+
+
+def download_file_from_drive(drive_service, file_name, folder_id, local_path):
+    """Download a file from Google Drive to local path."""
+    results = drive_service.files().list(
+        q=f"name='{file_name}' and parents in '{folder_id}'",
+        fields="files(id, name, mimeType, size)"
+    ).execute()
+
+    files = results.get('files', [])
+
+    file_info = files[0]
+    file_id = file_info['id']
+    mime_type = file_info.get('mimeType', '')
+    file_size = file_info.get('size', 'unknown')
+
+    print(f"Found file: {file_name}")
+    print(f"  - MIME type: {mime_type}")
+    print(f"  - Size: {file_size} bytes")
+    print(f"  - File ID: {file_id}")
+
+    if mime_type == 'application/vnd.google-apps.shortcut':
+        print("This is a Google Drive shortcut. Following the shortcut to get the actual file...")
+
+        shortcut_details = drive_service.files().get(
+            fileId=file_id, 
+            fields='shortcutDetails'
+        ).execute()
+
+        target_id = shortcut_details['shortcutDetails']['targetId']
+        print(f"Shortcut points to file ID: {target_id}")
+
+        target_file = drive_service.files().get(
+            fileId=target_id,
+            fields='id, name, mimeType, size'
+        ).execute()
+
+        print(f"Target file details:")
+        print(f"  - Name: {target_file.get('name', 'Unknown')}")
+        print(f"  - MIME type: {target_file.get('mimeType', 'Unknown')}")
+        print(f"  - Size: {target_file.get('size', 'Unknown')} bytes")
+
+        file_id = target_id
+        mime_type = target_file.get('mimeType', '')
+        file_size = target_file.get('size', 'unknown')
+
+        request = drive_service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+
+        done = False
+        print("Starting download...")
+        while done is False:
+            status, done = downloader.next_chunk()
+            if status:
+                progress = int(status.progress() * 100)
+                print(f"Download progress: {progress}%")
+
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, 'wb') as f:
+            f.write(fh.getvalue())
+
+        print(f"Successfully downloaded {file_name} to {local_path}")
+        print(f"File size: {len(fh.getvalue())} bytes")
+
+
+def main():
+    """Main function to run data extraction locally with Google Drive dataset."""
+    print("Setting up Google Drive access...")
+    drive_service = setup_google_drive_access()
+    print("Google Drive authentication successful")
+
+    print("Finding MIMIC-III folder...")
+    folder_id = find_mimic_folder(drive_service)
+    print(f"Found MIMIC-III folder (ID: {folder_id})")
+
+    print("\nListing all files in MIMIC-III folder:")
+    list_files_in_folder(drive_service, folder_id)
+
+    local_db_path = "data/mimiciii.duckdb"
+    if not os.path.exists(local_db_path):
+        print("Downloading MIMIC-III database...")
+        download_file_from_drive(drive_service, "mimiciii.duckdb", folder_id, local_db_path)
+    else:
+        print("Using existing local database file")
+
+    print("Connecting to MIMIC-III database...")
+    con = duckdb.connect(local_db_path)
+    print("Connected to database successfully")
+
+    initial_cohort_csv = "csvs/initial_cohort.csv"
+    labs_csv = "csvs/labs_metadata.csv"
+    vitals_csv = "csvs/vital_metadata.csv"
+
+    print("Starting raw data extraction...")
+    results = extract_raw(con, initial_cohort_csv, labs_csv, vitals_csv)
+
+    print("\nExtraction completed successfully!")
+    print(f"Cohort size: {len(results['cohort'])} patients")
+    print(f"Lab events: {len(results['labs'])} records")
+    print(f"Vital events: {len(results['vitals'])} records")
+    print(f"Target labels: {len(results['targets'])} patients")
+
+    print("\n--- Cohort Sample ---")
+    print(results['cohort'].head())
+
+    print("\n--- Labs Sample ---")
+    print(results['labs'].head())
+
+    print("\n--- Vitals Sample ---")
+    print(results['vitals'].head())
+
+    print("\n--- Targets Sample ---")
+    print(results['targets'].head())
+
+    return results
+
+
+if __name__ == "__main__":
+    main()
