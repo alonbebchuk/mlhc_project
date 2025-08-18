@@ -196,20 +196,45 @@ def normalize_categorical_enums(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_cohort_and_targets(adm_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Apply inclusion/exclusion criteria, keep first admission per subject, and label targets."""
+    print(f"  Starting with {len(adm_df)} total admissions")
+
     df_all = adm_df.sort_values(["subject_id", "admittime"]).copy()
     df_all["next_admittime"] = df_all.groupby("subject_id")["admittime"].shift(-1)
 
     df = df_all.groupby("subject_id", as_index=False).head(1).copy()
+    print(f"  After keeping first admission per subject: {len(df)} admissions")
+
     df["admission_age"] = (df["admittime"] - df["dob"]).dt.total_seconds() / SECONDS_PER_YEAR
     df["los_hours"] = (df["dischtime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR
     df["died_before_min_window"] = df["dod"].notna() & ((df["dod"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR < MIN_LOS_HOURS)
 
-    keep = (
-        (df["admission_age"].between(MIN_AGE, MAX_AGE, inclusive="both"))
-        & (df["los_hours"] >= MIN_LOS_HOURS)
-        & (df["has_chartevents_data"] == 1)
-        & (~df["died_before_min_window"])
-    )
+    age_ok = df["admission_age"].between(MIN_AGE, MAX_AGE, inclusive="both")
+    los_ok = df["los_hours"] >= MIN_LOS_HOURS
+    chartevents_ok = df["has_chartevents_data"] == 1
+    not_died_early = ~df["died_before_min_window"]
+
+    print(f"  Age criteria ({MIN_AGE}-{MAX_AGE}): {age_ok.sum()}/{len(df)} patients")
+    print(f"  LOS criteria (>={MIN_LOS_HOURS}h): {los_ok.sum()}/{len(df)} patients")
+    print(f"  Has chartevents data: {chartevents_ok.sum()}/{len(df)} patients")
+    print(f"  Did not die before {MIN_LOS_HOURS}h: {not_died_early.sum()}/{len(df)} patients")
+
+    keep = age_ok & los_ok & chartevents_ok & not_died_early
+    print(f"  Final cohort after all criteria: {keep.sum()}/{len(df)} patients")
+
+    excluded = df.loc[~keep]
+    if len(excluded) > 0:
+        print(f"  Excluded {len(excluded)} patients:")
+
+        age_excluded = ~(excluded['admission_age'].between(MIN_AGE, MAX_AGE, inclusive="both"))
+        los_excluded = ~(excluded['los_hours'] >= MIN_LOS_HOURS)
+        chartevents_excluded = ~(excluded['has_chartevents_data'] == 1)
+        died_early_excluded = excluded['died_before_min_window']
+
+        print(f"    - Age not {MIN_AGE}-{MAX_AGE}: {age_excluded.sum()}")
+        print(f"    - LOS < {MIN_LOS_HOURS}h: {los_excluded.sum()}")
+        print(f"    - No chartevents data: {chartevents_excluded.sum()}")
+        print(f"    - Died before {MIN_LOS_HOURS}h: {died_early_excluded.sum()}")
+
     df = df.loc[keep].reset_index(drop=True)
 
     df["mortality"] = (df["dod"].notna() & (df["dod"] <= (df["dischtime"] + pd.Timedelta(days=MORTALITY_WINDOW_DAYS)))).astype(int)
@@ -575,9 +600,13 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
 def extract_raw(con, initial_cohort_csv: str, labs_csv: str, vitals_csv: str) -> Dict[str, pd.DataFrame]:
     """Orchestrate raw extraction for the first-admission cohort."""
     subject_ids = load_initial_subjects(initial_cohort_csv)
+    print(f"Loaded {len(subject_ids)} subject IDs from initial cohort: {subject_ids}")
+
     base = query_base_admissions(con, subject_ids)
+    print(f"Found {len(base)} admissions for these subjects")
 
     cohort, targets = create_cohort_and_targets(base)
+    print(f"After inclusion/exclusion criteria: {len(cohort)} patients remaining")
     hadm_ids = cohort["hadm_id"].tolist()
 
     cohort = add_first_icu_intime(con, hadm_ids, cohort)
