@@ -6,7 +6,7 @@ This project provides tools for extracting and processing data from the MIMIC-II
 
 ```bash
 conda env create -f environment.yml
-conda activate mlhc-final-project
+conda activate mlhc-project
 ```
 
 ## MIMIC-III Data Access Setup
