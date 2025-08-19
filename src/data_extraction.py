@@ -1,5 +1,4 @@
 import duckdb
-import io
 import os
 import pickle
 import pandas as pd
@@ -7,7 +6,6 @@ from pathlib import Path
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
 from typing import Dict, List, Tuple
 
 
@@ -600,7 +598,7 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
 def extract_raw(con, initial_cohort_csv: str, labs_csv: str, vitals_csv: str) -> Dict[str, pd.DataFrame]:
     """Orchestrate raw extraction for the first-admission cohort."""
     subject_ids = load_initial_subjects(initial_cohort_csv)
-    print(f"Loaded {len(subject_ids)} subject IDs from initial cohort: {subject_ids}")
+    print(f"Loaded {len(subject_ids)} subject IDs from initial cohort")
 
     base = query_base_admissions(con, subject_ids)
     print(f"Found {len(base)} admissions for these subjects")
@@ -666,120 +664,12 @@ def find_mimic_folder(drive_service):
     return folders[0]['id']
 
 
-def list_files_in_folder(drive_service, folder_id):
-    """List all files in a Google Drive folder for debugging."""
-    print(f"Listing files in folder (ID: {folder_id}):")
-    results = drive_service.files().list(
-        q=f"parents in '{folder_id}'",
-        fields="files(id, name, mimeType, size, modifiedTime)"
-    ).execute()
-
-    files = results.get('files', [])
-
-    for file_info in files:
-        name = file_info.get('name', 'Unknown')
-        mime_type = file_info.get('mimeType', 'Unknown')
-        size = file_info.get('size', 'Unknown')
-        modified = file_info.get('modifiedTime', 'Unknown')
-        file_id = file_info.get('id', 'Unknown')
-
-        print(f"  - {name}")
-        print(f"    MIME: {mime_type}")
-        print(f"    Size: {size} bytes")
-        print(f"    Modified: {modified}")
-        print(f"    ID: {file_id}")
-        print()
-
-    return files
-
-
-def download_file_from_drive(drive_service, file_name, folder_id, local_path):
-    """Download a file from Google Drive to local path."""
-    results = drive_service.files().list(
-        q=f"name='{file_name}' and parents in '{folder_id}'",
-        fields="files(id, name, mimeType, size)"
-    ).execute()
-
-    files = results.get('files', [])
-
-    file_info = files[0]
-    file_id = file_info['id']
-    mime_type = file_info.get('mimeType', '')
-    file_size = file_info.get('size', 'unknown')
-
-    print(f"Found file: {file_name}")
-    print(f"  - MIME type: {mime_type}")
-    print(f"  - Size: {file_size} bytes")
-    print(f"  - File ID: {file_id}")
-
-    if mime_type == 'application/vnd.google-apps.shortcut':
-        print("This is a Google Drive shortcut. Following the shortcut to get the actual file...")
-
-        shortcut_details = drive_service.files().get(
-            fileId=file_id, 
-            fields='shortcutDetails'
-        ).execute()
-
-        target_id = shortcut_details['shortcutDetails']['targetId']
-        print(f"Shortcut points to file ID: {target_id}")
-
-        target_file = drive_service.files().get(
-            fileId=target_id,
-            fields='id, name, mimeType, size'
-        ).execute()
-
-        print(f"Target file details:")
-        print(f"  - Name: {target_file.get('name', 'Unknown')}")
-        print(f"  - MIME type: {target_file.get('mimeType', 'Unknown')}")
-        print(f"  - Size: {target_file.get('size', 'Unknown')} bytes")
-
-        file_id = target_id
-        mime_type = target_file.get('mimeType', '')
-        file_size = target_file.get('size', 'unknown')
-
-        request = drive_service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-
-        done = False
-        print("Starting download...")
-        while done is False:
-            status, done = downloader.next_chunk()
-            if status:
-                progress = int(status.progress() * 100)
-                print(f"Download progress: {progress}%")
-
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        with open(local_path, 'wb') as f:
-            f.write(fh.getvalue())
-
-        print(f"Successfully downloaded {file_name} to {local_path}")
-        print(f"File size: {len(fh.getvalue())} bytes")
-
-
 def main():
-    """Main function to run data extraction locally with Google Drive dataset."""
-    print("Setting up Google Drive access...")
-    drive_service = setup_google_drive_access()
-    print("Google Drive authentication successful")
+    """Main function using Google Drive Desktop."""
+    print("Using Google Drive Desktop")
 
-    print("Finding MIMIC-III folder...")
-    folder_id = find_mimic_folder(drive_service)
-    print(f"Found MIMIC-III folder (ID: {folder_id})")
-
-    print("\nListing all files in MIMIC-III folder:")
-    list_files_in_folder(drive_service, folder_id)
-
-    local_db_path = "data/mimiciii.duckdb"
-    if not os.path.exists(local_db_path):
-        print("Downloading MIMIC-III database...")
-        download_file_from_drive(drive_service, "mimiciii.duckdb", folder_id, local_db_path)
-    else:
-        print("Using existing local database file")
-
-    print("Connecting to MIMIC-III database...")
-    con = duckdb.connect(local_db_path)
-    print("Connected to database successfully")
+    drive_path = r'H:\My Drive\MIMIC-III'
+    con = duckdb.connect(f'{drive_path}/mimiciii.duckdb')
 
     initial_cohort_csv = "csvs/initial_cohort.csv"
     labs_csv = "csvs/labs_metadata.csv"
@@ -793,6 +683,8 @@ def main():
     print(f"Lab events: {len(results['labs'])} records")
     print(f"Vital events: {len(results['vitals'])} records")
     print(f"Target labels: {len(results['targets'])} patients")
+
+    con.close()
 
     output_dir = "data"
     os.makedirs(output_dir, exist_ok=True)
