@@ -25,6 +25,7 @@ from config import *
 # SECONDS_PER_HOUR = 60 * 60
 # SECONDS_PER_YEAR = 365 * 24 * SECONDS_PER_HOUR
 
+
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 
@@ -93,118 +94,14 @@ def parse_enum(series: pd.Series, values: List[str], other: str = "OTHER") -> pd
 
 
 def normalize_categorical_enums(df: pd.DataFrame) -> pd.DataFrame:
-    admission_type_values = {
-        "EMERGENCY",
-        "URGENT",
-        "ELECTIVE",
-    }
-    admission_location_values = {
-        "EMERGENCY ROOM ADMIT",
-        "TRANSFER FROM HOSP/EXTRAM",
-        "TRANSFER FROM OTHER HEALT",
-        "CLINIC REFERRAL/PREMATURE",
-        "** INFO NOT AVAILABLE **",
-        "TRANSFER FROM SKILLED NUR",
-        "TRSF WITHIN THIS FACILITY",
-        "HMO REFERRAL/SICK",
-        "PHYS REFERRAL/NORMAL DELI",
-    }
-    insurance_values = {
-        "MEDICARE",
-        "PRIVATE",
-        "MEDICAID",
-        "GOVERNMENT",
-        "SELF_PAY",
-    }
-    language_values = {
-        "ENGL",
-        "SPAN",
-        "RUSS",
-        "CANT",
-        "PORT",
-        "MAND",
-        "HAIT",
-        "FREN",
-        "GREE",
-        "ITAL",
-        "CAPE",
-        "VIET",
-        "ARAB",
-    }
-    religion_values = {
-        "CATHOLIC",
-        "NOT_SPECIFIED",
-        "UNOBTAINABLE",
-        "PROTESTANT_QUAKER",
-        "JEWISH",
-        "OTHER",
-        "CHRISTIAN_SCIENTIST",
-        "BUDDHIST",
-        "MUSLIM",
-        "JEHOVAHS_WITNESS",
-        "GREEK_ORTHODOX",
-        "HINDU",
-        "UNITARIAN_UNIVERSALIST",
-        "SEVENTH_DAY_ADVENTIST",
-        "ROMANIAN_EAST_ORTH",
-        "BAPTIST",
-        "EPISCOPALIAN",
-        "LUTHERAN",
-        "METHODIST",
-        "HEBREW",
-    }
-    marital_status_values = {
-        "MARRIED",
-        "SINGLE",
-        "WIDOWED",
-        "DIVORCED",
-        "SEPARATED",
-        "UNKNOWN_NOT_SPECIFIED",
-        "LIVING_WITH_PARTNER",
-    }
-    ethnicity_values = {
-        "WHITE",
-        "BLACK_AFRICAN_AMERICAN",
-        "UNKNOWN_NOT_SPECIFIED",
-        "HISPANIC_OR_LATINO",
-        "ASIAN",
-        "UNABLE_TO_OBTAIN",
-        "PATIENT_DECLINED_TO_ANSWER",
-        "OTHER",
-        "ASIAN_CHINESE",
-        "HISPANIC_LATINO_PUERTO_RICAN",
-        "BLACK_CAPE_VERDEAN",
-        "WHITE_RUSSIAN",
-        "MULTI_RACE_ETHNICITY",
-        "BLACK_HAITIAN",
-        "ASIAN_VIETNAMESE",
-        "ASIAN_CAMBODIAN",
-        "WHITE_EASTERN_EUROPEAN",
-        "ASIAN_FILIPINO",
-        "HISPANIC_LATINO_DOMINICAN",
-        "WHITE_OTHER_EUROPEAN",
-        "PORTUGUESE",
-        "BLACK_AFRICAN",
-        "MIDDLE_EASTERN",
-        "ASIAN_INDIAN",
-        "HISPANIC_LATINO_GUATEMALAN",
-        "ASIAN_ASIAN_INDIAN",
-        "HISPANIC_LATINO_CUBAN",
-        "AMERICAN_INDIAN_ALASKA_NATIVE",
-        "HISPANIC_LATINO_SALVADORAN",
-        "NATIVE_HAWAIIAN_OR_OTHER_PACIFIC_ISLANDER",
-        "ASIAN_KOREAN",
-        "CARIBBEAN_ISLAND",
-        "SOUTH_AMERICAN",
-    }
 
-    df["admission_type"] = parse_enum(df["admission_type"], admission_type_values)
-    df["admission_location"] = parse_enum(df["admission_location"], admission_location_values)
-    df["insurance"] = parse_enum(df["insurance"], insurance_values)
-    df["language"] = parse_enum(df["language"], language_values)
-    df["religion"] = parse_enum(df["religion"], religion_values)
-    df["marital_status"] = parse_enum(df["marital_status"], marital_status_values)
-    df["ethnicity"] = parse_enum(df["ethnicity"], ethnicity_values)
+    df["admission_type"] = parse_enum(df["admission_type"], ADMISSION_TYPE)
+    df["admission_location"] = parse_enum(df["admission_location"], ADMISSION_LOCATION)
+    df["insurance"] = parse_enum(df["insurance"], INSURANCE)
+    df["language"] = parse_enum(df["language"], LANGUAGE)
+    df["religion"] = parse_enum(df["religion"], RELIGION)
+    df["marital_status"] = parse_enum(df["marital_status"], MARTIAL_STATUS)
+    df["ethnicity"] = parse_enum(df["ethnicity"], ETHNICITY)
     return df
 
 
@@ -287,16 +184,8 @@ def create_cohort_and_targets(adm_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
 def add_first_icu_intime(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
     """Add first ICU intime within 48h to cohort."""
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
-    sql = f"""
-    SELECT i.hadm_id::INTEGER AS hadm_id,
-           MIN(i.intime)::TIMESTAMP AS first_icu_intime
-    FROM icustays i
-    JOIN admissions a ON i.hadm_id = a.hadm_id
-    WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    GROUP BY i.hadm_id
-    """
-    icu = con.execute(sql).fetchdf()
+
+    icu = con.execute(ICU_INTIME).fetchdf()
 
     cohort_df = cohort_df.merge(icu, on="hadm_id", how="left")
     return cohort_df

@@ -51,3 +51,14 @@ VITQUER = f"""
       AND c.valuenum IS NOT NULL
       AND c.error::INTEGER == 0
     """
+
+ICU_INTIME = f"""
+    SELECT i.hadm_id::INTEGER AS hadm_id,
+           MIN(i.intime)::TIMESTAMP AS first_icu_intime
+    FROM icustays i
+    JOIN admissions a ON i.hadm_id = a.hadm_id
+    WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+    GROUP BY i.hadm_id
+    """
+
