@@ -26,27 +26,7 @@ SECONDS_PER_YEAR = 365 * 24 * SECONDS_PER_HOUR
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 
-def load_initial_subjects(path: str) -> List[int]:
-    """Load the initial cohort subject IDs from CSV."""
-    df = pd.read_csv(path, dtype={"subject_id": "int64"})
-    subject_ids = df["subject_id"].tolist()
-    return subject_ids
-
-
-def load_metadata(meta_path: str) -> pd.DataFrame:
-    """Load itemids with min/max bounds from a metadata CSV."""
-    df = pd.read_csv(
-        meta_path,
-        usecols=["itemid", "min", "max"],
-        dtype={"itemid": "int64", "min": "float64", "max": "float64"},
-    )
-    return df
-
-
-def query_base_admissions(con, subject_ids: List[int]) -> pd.DataFrame:
-    """Query admissions and patients (minimal base without ICU join)."""
-    con.register("tmp_subject_ids", pd.DataFrame({"subject_id": subject_ids}))
-    sql = f"""
+ICUQ = f"""
     SELECT a.subject_id::INTEGER AS subject_id,
            a.hadm_id::INTEGER AS hadm_id,
            a.admittime::TIMESTAMP AS admittime,
@@ -68,7 +48,92 @@ def query_base_admissions(con, subject_ids: List[int]) -> pd.DataFrame:
     JOIN patients p ON a.subject_id = p.subject_id
     WHERE a.subject_id::INTEGER IN (SELECT subject_id FROM tmp_subject_ids)
     """
-    df = con.execute(sql).fetchdf()
+
+LABQUERY = f"""
+    SELECT l.subject_id::INTEGER AS subject_id,
+           l.hadm_id::INTEGER AS hadm_id,
+           l.charttime::TIMESTAMP AS charttime,
+           l.itemid::INTEGER AS itemid,
+           l.valuenum::DOUBLE AS valuenum
+    FROM labevents l
+    JOIN admissions a ON l.subject_id = a.subject_id AND l.hadm_id = a.hadm_id
+    WHERE l.itemid::INTEGER IN (SELECT itemid FROM tmp_lab_itemids)
+      AND l.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND l.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+      AND l.valuenum IS NOT NULL
+    """
+
+VITQUER = f"""
+    SELECT c.subject_id::INTEGER AS subject_id,
+           c.hadm_id::INTEGER AS hadm_id,
+           c.charttime::TIMESTAMP AS charttime,
+           c.itemid::INTEGER AS itemid,
+           c.valuenum::DOUBLE AS valuenum
+    FROM chartevents c
+    JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
+    WHERE c.itemid::INTEGER IN (SELECT itemid FROM tmp_vital_itemids)
+      AND c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+      AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+      AND c.valuenum IS NOT NULL
+      AND c.error::INTEGER == 0
+    """
+
+def load_initial_subjects(path: str) -> List[int]:
+    """Load the initial cohort subject IDs from CSV."""
+    df = pd.read_csv(path, dtype={"subject_id": "int64"})
+    subject_ids = df["subject_id"].tolist()
+    return subject_ids
+
+
+def load_metadata(meta_path: str) -> pd.DataFrame:
+    """Load itemids with min/max bounds from a metadata CSV."""
+    df = pd.read_csv(
+        meta_path,
+        usecols=["itemid", "min", "max"],
+        dtype={"itemid": "int64", "min": "float64", "max": "float64"},
+    )
+    return df
+
+
+def query_base_admissions(con, subject_ids: List[int]) -> pd.DataFrame:
+    """Query admissions and patients (minimal base without ICU join)."""
+    con.register("tmp_subject_ids", pd.DataFrame({"subject_id": subject_ids}))
+
+    df = con.execute(ICUQ).fetchdf()
+    return df
+
+
+def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame:
+    """Query lab events within the first 48 hours and filter by metadata bounds."""
+    meta = load_metadata(labs_meta_csv)
+    itemids = meta["itemid"].tolist()
+
+    con.register("tmp_lab_itemids", pd.DataFrame({"itemid": itemids}))
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+
+    df = con.execute(LABQUERY).fetchdf()
+
+    df = df.merge(meta, on="itemid")
+    mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
+
+    df = df.loc[mask, ["subject_id", "hadm_id", "charttime", "itemid", "valuenum"]].reset_index(drop=True)
+    return df
+
+
+def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataFrame:
+    """Query vital sign events within the first 48 hours and filter by metadata bounds."""
+    meta = load_metadata(vitals_meta_csv)
+    itemids = meta["itemid"].tolist()
+
+    con.register("tmp_vital_itemids", pd.DataFrame({"itemid": itemids}))
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+
+    df = con.execute(VITQUER).fetchdf()
+
+    df = df.merge(meta, on="itemid")
+    mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
+
+    df = df.loc[mask, ["subject_id", "hadm_id", "charttime", "itemid", "valuenum"]].reset_index(drop=True)
     return df
 
 
@@ -537,69 +602,11 @@ def add_positive_blood_culture_flag(con, hadm_ids: List[int], cohort_df: pd.Data
     return cohort_df
 
 
-def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame:
-    """Query lab events within the first 48 hours and filter by metadata bounds."""
-    meta = load_metadata(labs_meta_csv)
-    itemids = meta["itemid"].tolist()
-
-    con.register("tmp_lab_itemids", pd.DataFrame({"itemid": itemids}))
-    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
-    sql = f"""
-    SELECT l.subject_id::INTEGER AS subject_id,
-           l.hadm_id::INTEGER AS hadm_id,
-           l.charttime::TIMESTAMP AS charttime,
-           l.itemid::INTEGER AS itemid,
-           l.valuenum::DOUBLE AS valuenum
-    FROM labevents l
-    JOIN admissions a ON l.subject_id = a.subject_id AND l.hadm_id = a.hadm_id
-    WHERE l.itemid::INTEGER IN (SELECT itemid FROM tmp_lab_itemids)
-      AND l.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND l.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-      AND l.valuenum IS NOT NULL
-    """
-    df = con.execute(sql).fetchdf()
-
-    df = df.merge(meta, on="itemid")
-    mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
-
-    df = df.loc[mask, ["subject_id", "hadm_id", "charttime", "itemid", "valuenum"]].reset_index(drop=True)
-    return df
-
-
-def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataFrame:
-    """Query vital sign events within the first 48 hours and filter by metadata bounds."""
-    meta = load_metadata(vitals_meta_csv)
-    itemids = meta["itemid"].tolist()
-
-    con.register("tmp_vital_itemids", pd.DataFrame({"itemid": itemids}))
-    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
-    sql = f"""
-    SELECT c.subject_id::INTEGER AS subject_id,
-           c.hadm_id::INTEGER AS hadm_id,
-           c.charttime::TIMESTAMP AS charttime,
-           c.itemid::INTEGER AS itemid,
-           c.valuenum::DOUBLE AS valuenum
-    FROM chartevents c
-    JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
-    WHERE c.itemid::INTEGER IN (SELECT itemid FROM tmp_vital_itemids)
-      AND c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-      AND c.valuenum IS NOT NULL
-      AND c.error::INTEGER == 0
-    """
-    df = con.execute(sql).fetchdf()
-
-    df = df.merge(meta, on="itemid")
-    mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
-
-    df = df.loc[mask, ["subject_id", "hadm_id", "charttime", "itemid", "valuenum"]].reset_index(drop=True)
-    return df
-
-
 def extract_raw(con, initial_cohort_csv: str, labs_csv: str, vitals_csv: str) -> Dict[str, pd.DataFrame]:
     """Orchestrate raw extraction for the first-admission cohort."""
     subject_ids = load_initial_subjects(initial_cohort_csv)
-    print(f"Loaded {len(subject_ids)} subject IDs from initial cohort: {subject_ids}")
+    # print(f"Loaded {len(subject_ids)} subject IDs from initial cohort: {subject_ids}")
+    print(f"Loaded {len(subject_ids)} subject IDs from initial cohort")
 
     base = query_base_admissions(con, subject_ids)
     print(f"Found {len(base)} admissions for these subjects")
