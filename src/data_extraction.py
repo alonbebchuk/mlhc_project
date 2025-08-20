@@ -756,6 +756,63 @@ def download_file_from_drive(drive_service, file_name, folder_id, local_path):
         print(f"Successfully downloaded {file_name} to {local_path}")
         print(f"File size: {len(fh.getvalue())} bytes")
 
+def download_file_from_drive_streaming(drive_service, file_name, folder_id, local_path):
+    """
+    Stream a large Drive file to disk in chunks (no RAM spike).
+    - Finds file by name inside the known folder
+    - Follows shortcuts
+    - Writes 16MB chunks directly to local_path
+    """
+    # Locate the file in the folder
+    resp = drive_service.files().list(
+        q=f"name='{file_name}' and '{folder_id}' in parents",
+        fields="files(id, name, mimeType, size)",
+        pageSize=10
+    ).execute()
+    files = resp.get('files', [])
+    if not files:
+        raise FileNotFoundError(f"'{file_name}' not found in folder {folder_id}")
+
+    fi = files[0]
+    file_id = fi['id']
+    mime_type = fi.get('mimeType', '')
+    remote_size = int(fi.get('size', '0') or 0)
+    print(f"Found: {fi['name']} (size: {remote_size:,} bytes)")
+
+    # Follow Google Drive shortcut
+    if mime_type == 'application/vnd.google-apps.shortcut':
+        sc = drive_service.files().get(fileId=file_id, fields='shortcutDetails').execute()
+        file_id = sc['shortcutDetails']['targetId']
+        tgt = drive_service.files().get(fileId=file_id, fields='id,name,size,mimeType').execute()
+        remote_size = int(tgt.get('size', '0') or 0)
+        print(f"Resolved shortcut → target: {tgt.get('name')} (size: {remote_size:,} bytes)")
+
+    # Prepare request
+    request = drive_service.files().get_media(fileId=file_id)
+
+    # Ensure folder exists
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+    # If a partial file exists from a previous crash, start fresh (simplest + safest)
+    if os.path.exists(local_path):
+        os.remove(local_path)
+
+    # Stream to disk in 16MB chunks
+    with open(local_path, 'wb') as fh:
+        downloader = MediaIoBaseDownload(fh, request, chunksize=16 * 1024 * 1024)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+            if status:
+                print(f"Download {int(status.progress() * 100)}%")
+
+    # Verify size (optional)
+    local_size = os.path.getsize(local_path)
+    if remote_size and local_size != remote_size:
+        raise IOError(f"Incomplete download: expected {remote_size:,} bytes, got {local_size:,} bytes")
+
+    print(f"Saved to {local_path} ({local_size:,} bytes)")
+
 
 def main():
     """Main function to run data extraction locally with Google Drive dataset."""
@@ -773,7 +830,8 @@ def main():
     local_db_path = "data/mimiciii.duckdb"
     if not os.path.exists(local_db_path):
         print("Downloading MIMIC-III database...")
-        download_file_from_drive(drive_service, "mimiciii.duckdb", folder_id, local_db_path)
+        download_file_from_drive_streaming(drive_service, "mimiciii.duckdb", folder_id, local_db_path)
+        # download_file_from_drive(drive_service, "mimiciii.duckdb", folder_id, local_db_path)
     else:
         print("Using existing local database file")
 
