@@ -756,6 +756,7 @@ def download_file_from_drive(drive_service, file_name, folder_id, local_path):
         print(f"Successfully downloaded {file_name} to {local_path}")
         print(f"File size: {len(fh.getvalue())} bytes")
 
+
 def main():
     """Main function to run data extraction locally with Google Drive dataset."""
     print("Setting up Google Drive access...")
