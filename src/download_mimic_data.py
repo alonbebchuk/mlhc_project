@@ -2,13 +2,13 @@ import duckdb
 import io
 import os
 import pickle
-import pandas as pd
+# import pandas as pd
 from pathlib import Path
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from typing import Dict, List, Tuple
+# from typing import Dict, List, Tuple
 
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
