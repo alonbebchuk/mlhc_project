@@ -2,6 +2,7 @@ import duckdb
 import os
 import pickle
 import pandas as pd
+import numpy as np
 from pathlib import Path
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -548,7 +549,8 @@ def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame
            l.hadm_id::INTEGER AS hadm_id,
            l.charttime::TIMESTAMP AS charttime,
            l.itemid::INTEGER AS itemid,
-           l.valuenum::DOUBLE AS valuenum
+           l.valuenum::DOUBLE AS valuenum,
+           a.admittime::TIMESTAMP AS admittime
     FROM labevents l
     JOIN admissions a ON l.subject_id = a.subject_id AND l.hadm_id = a.hadm_id
     WHERE l.itemid::INTEGER IN (SELECT itemid FROM tmp_lab_itemids)
@@ -561,7 +563,9 @@ def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame
     df = df.merge(meta, on="itemid")
     mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
 
-    df = df.loc[mask, ["subject_id", "hadm_id", "charttime", "itemid", "valuenum"]].reset_index(drop=True)
+    df["hour_from_admission"] = np.ceil((df["charttime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR).astype(int)
+
+    df = df.loc[mask, ["subject_id", "hadm_id", "itemid", "valuenum", "hour_from_admission"]].reset_index(drop=True)
     return df
 
 
@@ -577,7 +581,8 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
            c.hadm_id::INTEGER AS hadm_id,
            c.charttime::TIMESTAMP AS charttime,
            c.itemid::INTEGER AS itemid,
-           c.valuenum::DOUBLE AS valuenum
+           c.valuenum::DOUBLE AS valuenum,
+           a.admittime::TIMESTAMP AS admittime
     FROM chartevents c
     JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
     WHERE c.itemid::INTEGER IN (SELECT itemid FROM tmp_vital_itemids)
@@ -591,7 +596,9 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
     df = df.merge(meta, on="itemid")
     mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
 
-    df = df.loc[mask, ["subject_id", "hadm_id", "charttime", "itemid", "valuenum"]].reset_index(drop=True)
+    df["hour_from_admission"] = np.ceil((df["charttime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR).astype(int)
+
+    df = df.loc[mask, ["subject_id", "hadm_id", "itemid", "valuenum", "hour_from_admission"]].reset_index(drop=True)
     return df
 
 
