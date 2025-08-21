@@ -1,3 +1,8 @@
+"""
+queries.py
+This file contains all SQL queries used in the project.
+"""
+
 # from config import *
 from config import WINDOW_HOURS
 
