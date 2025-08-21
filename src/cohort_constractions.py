@@ -9,8 +9,24 @@ import pandas as pd
 # from googleapiclient.discovery import build
 # from googleapiclient.http import MediaIoBaseDownload
 from typing import Dict, List, Tuple
-from query import *
+from queries import *
 from config import *
+
+# from queries import (
+#     ICUQ, LABQUERY, VITQUER, ICU_INTIME,
+#     HEIGHT_48H, WEIGHT_48H,
+#     VASO_CV_48H, VASO_MV_48H,
+#     SED_CV_48H, SED_MV_48H,
+#     VENT_48H,
+#     RRT_PROC_48H, RRT_CHART_48H,
+#     RX_ABX_48H, MICRO_BLOOD_48H,
+# )
+# from config import (
+#     WINDOW_HOURS, GAP_HOURS, MIN_LOS_HOURS, MIN_AGE, MAX_AGE,
+#     PROLONGED_LOS_THRESHOLD_DAYS, READMISSION_WINDOW_DAYS, MORTALITY_WINDOW_DAYS,
+#     SECONDS_PER_HOUR, SECONDS_PER_YEAR,
+#     ADMISSION_TYPE, ADMISSION_LOCATION, INSURANCE, LANGUAGE, RELIGION, MARTIAL_STATUS, ETHNICITY
+# )
 
 # WINDOW_HOURS: int = 48
 # GAP_HOURS: int = 6
@@ -28,16 +44,66 @@ from config import *
 
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
+# ---------- small helpers ----------
+
+def _assert_required_columns(df: pd.DataFrame, cols: list[str], name: str):
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{name} missing columns: {missing}")
+
+# def parse_enum(series: pd.Series, values, other: str = "OTHER") -> pd.Series:
+#     # Keep NA as <NA> using pandas StringDtype, then normalize
+#     s = series.astype('string').str.upper()
+#     s = s.fillna("")
+#     return s.where(s.isin(values), other)
+
+# def normalize_categorical_enums(df: pd.DataFrame) -> pd.DataFrame:
+#     for col, vocab in [
+#         ("admission_type", ADMISSION_TYPE),
+#         ("admission_location", ADMISSION_LOCATION),
+#         ("insurance", INSURANCE),
+#         ("language", LANGUAGE),
+#         ("religion", RELIGION),
+#         ("marital_status", MARTIAL_STATUS),
+#         ("ethnicity", ETHNICITY),
+#     ]:
+#         if col in df.columns:
+#             df[col] = parse_enum(df[col], vocab)
+#     return df
+
+
+def parse_enum(series: pd.Series, values: List[str], other: str = "OTHER") -> pd.Series:
+    s = series.astype(str).str.upper().fillna("")
+    return s.where(s.isin(values), other=other)
+
+
+def normalize_categorical_enums(df: pd.DataFrame) -> pd.DataFrame:
+
+    df["admission_type"] = parse_enum(df["admission_type"], ADMISSION_TYPE)
+    df["admission_location"] = parse_enum(df["admission_location"], ADMISSION_LOCATION)
+    df["insurance"] = parse_enum(df["insurance"], INSURANCE)
+    df["language"] = parse_enum(df["language"], LANGUAGE)
+    df["religion"] = parse_enum(df["religion"], RELIGION)
+    df["marital_status"] = parse_enum(df["marital_status"], MARTIAL_STATUS)
+    df["ethnicity"] = parse_enum(df["ethnicity"], ETHNICITY)
+    return df
+
+
+# ---------- IO loaders ----------
 
 def load_initial_subjects(path: str) -> List[int]:
     """Load the initial cohort subject IDs from CSV."""
     df = pd.read_csv(path, dtype={"subject_id": "int64"})
+    # _assert_required_columns(df, ["subject_id"], "initial_cohort_csv")
     subject_ids = df["subject_id"].tolist()
     return subject_ids
 
 
 def load_metadata(meta_path: str) -> pd.DataFrame:
     """Load itemids with min/max bounds from a metadata CSV."""
+    # df = pd.read_csv(meta_path, usecols=["itemid", "min", "max"])
+    # _assert_required_columns(df, ["itemid","min","max"], "metadata_csv")
+    # return df.astype({"itemid": "int64", "min": "float64", "max": "float64"})
     df = pd.read_csv(
         meta_path,
         usecols=["itemid", "min", "max"],
@@ -45,6 +111,8 @@ def load_metadata(meta_path: str) -> pd.DataFrame:
     )
     return df
 
+
+# ---------- Base queries ----------
 
 def query_base_admissions(con, subject_ids: List[int]) -> pd.DataFrame:
     """Query admissions and patients (minimal base without ICU join)."""
@@ -88,22 +156,7 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
     return df
 
 
-def parse_enum(series: pd.Series, values: List[str], other: str = "OTHER") -> pd.Series:
-    s = series.astype(str).str.upper().fillna("")
-    return s.where(s.isin(values), other=other)
-
-
-def normalize_categorical_enums(df: pd.DataFrame) -> pd.DataFrame:
-
-    df["admission_type"] = parse_enum(df["admission_type"], ADMISSION_TYPE)
-    df["admission_location"] = parse_enum(df["admission_location"], ADMISSION_LOCATION)
-    df["insurance"] = parse_enum(df["insurance"], INSURANCE)
-    df["language"] = parse_enum(df["language"], LANGUAGE)
-    df["religion"] = parse_enum(df["religion"], RELIGION)
-    df["marital_status"] = parse_enum(df["marital_status"], MARTIAL_STATUS)
-    df["ethnicity"] = parse_enum(df["ethnicity"], ETHNICITY)
-    return df
-
+# ---------- Cohort construction & targets ----------
 
 def create_cohort_and_targets(adm_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Apply inclusion/exclusion criteria, keep first admission per subject, and label targets."""
@@ -117,7 +170,8 @@ def create_cohort_and_targets(adm_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
 
     df["admission_age"] = (df["admittime"] - df["dob"]).dt.total_seconds() / SECONDS_PER_YEAR
     df["los_hours"] = (df["dischtime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR
-    df["died_before_min_window"] = df["dod"].notna() & ((df["dod"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR < MIN_LOS_HOURS)
+    df["died_before_min_window"] = df["dod"].notna() & (
+        (df["dod"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR < MIN_LOS_HOURS)
 
     age_ok = df["admission_age"].between(MIN_AGE, MAX_AGE, inclusive="both")
     los_ok = df["los_hours"] >= MIN_LOS_HOURS
@@ -148,38 +202,46 @@ def create_cohort_and_targets(adm_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
 
     df = df.loc[keep].reset_index(drop=True)
 
-    df["mortality"] = (df["dod"].notna() & (df["dod"] <= (df["dischtime"] + pd.Timedelta(days=MORTALITY_WINDOW_DAYS)))).astype(int)
+    # targets
+    df["mortality"] = (
+        df["dod"].notna() & 
+        (df["dod"] <= (df["dischtime"] + pd.Timedelta(days=MORTALITY_WINDOW_DAYS)))
+        ).astype(int)
     df["prolonged_los"] = ((df["dischtime"] - df["admittime"]) > pd.Timedelta(days=PROLONGED_LOS_THRESHOLD_DAYS)).astype(int)
-    df["readmission_30d"] = (df["next_admittime"].notna() & (df["next_admittime"] <= (df["dischtime"] + pd.Timedelta(days=READMISSION_WINDOW_DAYS)))).astype(int)
+    df["readmission_30d"] = (
+        df["next_admittime"].notna() & 
+        (df["next_admittime"] <= (df["dischtime"] + pd.Timedelta(days=READMISSION_WINDOW_DAYS)))
+        ).astype(int)
 
     df = normalize_categorical_enums(df)
 
     cohort = df[[
-        "subject_id",
-        "hadm_id",
-        "admittime",
-        "admission_type",
-        "admission_location",
-        "insurance",
-        "language",
-        "religion",
-        "marital_status",
-        "ethnicity",
-        "edregtime",
-        # "diagnosis",
-        "gender",
-        "admission_age"
+        "subject_id","hadm_id","admittime","admission_type","admission_location",
+        "insurance","language","religion","marital_status","ethnicity","edregtime",
+        "gender","admission_age"
     ]]
-    targets = df[[
-        "subject_id",
-        "hadm_id",
-        "mortality",
-        "prolonged_los",
-        "readmission_30d"
-    ]]
+    targets = df[["subject_id","hadm_id","mortality","prolonged_los","readmission_30d"]]
+    # cohort = df[[
+    #     "subject_id",
+    #     "hadm_id",
+    #     "admittime",
+    #     "admission_type",
+    #     "admission_location",
+    #     "insurance",
+    #     "language",
+    #     "religion",
+    #     "marital_status",
+    #     "ethnicity",
+    #     "edregtime",
+    #     # "diagnosis",
+    #     "gender",
+    #     "admission_age"
+    # ]]
 
     return cohort, targets
 
+
+# ---------- Feature add-ons (first 48h) ----------
 
 def add_first_icu_intime(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
     """Add first ICU intime within 48h to cohort."""
@@ -199,20 +261,8 @@ def add_first_height(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_height_itemids", pd.DataFrame({"itemid": height_itemids}))
-    sql_h = f"""
-    SELECT c.hadm_id::INTEGER AS hadm_id,
-           c.charttime::TIMESTAMP AS charttime,
-           c.itemid::INTEGER AS itemid,
-           c.valuenum::DOUBLE AS valuenum
-    FROM chartevents c
-    JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
-    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_itemids)
-      AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-      AND c.valuenum IS NOT NULL
-      AND c.error::INTEGER == 0
-    """
-    h = con.execute(sql_h).fetchdf()
+
+    h = con.execute(HEIGHT_48H).fetchdf()
 
     h = h.copy()
     h["height_cm"] = h["valuenum"].astype(float)
@@ -232,20 +282,8 @@ def add_first_weight(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_weight_itemids", pd.DataFrame({"itemid": weight_itemids}))
-    sql_w = f"""
-    SELECT c.hadm_id::INTEGER AS hadm_id,
-           c.charttime::TIMESTAMP AS charttime,
-           c.itemid::INTEGER AS itemid,
-           c.valuenum::DOUBLE AS valuenum
-    FROM chartevents c
-    JOIN admissions a ON c.subject_id = a.subject_id AND c.hadm_id = a.hadm_id
-    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_itemids)
-      AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-      AND c.valuenum IS NOT NULL
-      AND c.error::INTEGER == 0
-    """
-    w = con.execute(sql_w).fetchdf()
+    
+    w = con.execute(WEIGHT_48H).fetchdf()
 
     w = w.copy()
     w["weight_kg"] = w["valuenum"].astype(float)
@@ -263,24 +301,9 @@ def add_received_vasopressor_flag(con, hadm_ids: List[int], cohort_df: pd.DataFr
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_vaso_itemids", pd.DataFrame({"itemid": vaso_itemids}))
-    sql_cv = f"""
-    SELECT ie.hadm_id::INTEGER AS hadm_id
-    FROM inputevents_cv ie
-    JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_itemids)
-      AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
-    sql_mv = f"""
-    SELECT ie.hadm_id::INTEGER AS hadm_id
-    FROM inputevents_mv ie
-    JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_itemids)
-      AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
-    cv = con.execute(sql_cv).fetchdf()
-    mv = con.execute(sql_mv).fetchdf()
+    
+    cv = con.execute(VASO_CV_48H).fetchdf()
+    mv = con.execute(VASO_MV_48H).fetchdf()
     both = pd.concat([cv, mv], ignore_index=True)
 
     flag = both.groupby("hadm_id").size().gt(0).astype(int).rename("received_vasopressor").reset_index()
@@ -296,54 +319,15 @@ def add_received_sedation_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_sed_itemids", pd.DataFrame({"itemid": sed_itemids}))
-    sql_cv = f"""
-    SELECT ie.hadm_id::INTEGER AS hadm_id
-    FROM inputevents_cv ie
-    JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_itemids)
-      AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
-    sql_mv = f"""
-    SELECT ie.hadm_id::INTEGER AS hadm_id
-    FROM inputevents_mv ie
-    JOIN admissions a ON ie.hadm_id = a.hadm_id AND ie.subject_id = a.subject_id
-    WHERE ie.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_itemids)
-      AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
-    cv = con.execute(sql_cv).fetchdf()
-    mv = con.execute(sql_mv).fetchdf()
+    
+    cv = con.execute(SED_CV_48H).fetchdf()
+    mv = con.execute(SED_MV_48H).fetchdf()
     both = pd.concat([cv, mv], ignore_index=True)
 
     flag = both.groupby("hadm_id").size().gt(0).astype(int).rename("received_sedation").reset_index()
 
     cohort_df = cohort_df.merge(flag, on="hadm_id", how="left")
     cohort_df["received_sedation"] = cohort_df["received_sedation"].fillna(0).astype(int)
-    return cohort_df
-
-
-def add_received_antibiotic_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
-    """Add 0/1 flag 'received_antibiotic' based on PRESCRIPTIONS within 48h of admission."""
-    ab_keywords = ["vancomycin", "zosyn", "piperacillin", "tazobactam", "cefepime", "meropenem", "levofloxacin", "azithromycin", "ceftriaxone", "metronidazole"]
-    pattern = "|".join(ab_keywords)
-
-    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
-    sql_rx = f"""
-    SELECT p.hadm_id::INTEGER AS hadm_id, LOWER(COALESCE(p.drug, '')) AS drug
-    FROM prescriptions p
-    JOIN admissions a ON p.hadm_id = a.hadm_id AND p.subject_id = a.subject_id
-    WHERE p.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND p.startdate::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
-    rx = con.execute(sql_rx).fetchdf()
-
-    drugs = rx["drug"].astype(str)
-    rx = rx.loc[drugs.str.contains(pattern, case=False, regex=True)]
-    flag = rx.groupby("hadm_id").size().gt(0).astype(int).rename("received_antibiotic").reset_index()
-
-    cohort_df = cohort_df.merge(flag, on="hadm_id", how="left")
-    cohort_df["received_antibiotic"] = cohort_df["received_antibiotic"].fillna(0).astype(int)
     return cohort_df
 
 
@@ -357,16 +341,8 @@ def add_was_mechanically_ventilated_flag(con, hadm_ids: List[int], cohort_df: pd
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_vent_itemids", pd.DataFrame({"itemid": vent_itemids}))
-    sql_vent = f"""
-    SELECT c.hadm_id::INTEGER AS hadm_id, c.itemid::INTEGER AS itemid, LOWER(COALESCE(c.value, '')) AS value
-    FROM chartevents c
-    JOIN admissions a ON c.hadm_id = a.hadm_id AND c.subject_id = a.subject_id
-    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_vent_itemids)
-      AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-      AND c.error::INTEGER == 0
-    """
-    vent = con.execute(sql_vent).fetchdf()
+    
+    vent = con.execute(VENT_48H).fetchdf()
 
     has_setting = vent[vent["itemid"].isin(vent_setting_itemids + peep_itemids + tv_itemids)]
     ox = vent[vent["itemid"].isin(oxygen_device_itemids)]
@@ -390,26 +366,10 @@ def add_received_rrt_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> 
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_rrt_proc_itemids", pd.DataFrame({"itemid": rrt_proc_itemids}))
-    sql_rrt_proc = f"""
-    SELECT p.hadm_id::INTEGER AS hadm_id
-    FROM procedureevents_mv p
-    JOIN admissions a ON p.hadm_id = a.hadm_id AND p.subject_id = a.subject_id
-    WHERE p.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND p.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_proc_itemids)
-      AND p.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
     con.register("tmp_rrt_chart_itemids", pd.DataFrame({"itemid": [152]}))
-    sql_rrt_chart = f"""
-    SELECT c.hadm_id::INTEGER AS hadm_id
-    FROM chartevents c
-    JOIN admissions a ON c.hadm_id = a.hadm_id AND c.subject_id = a.subject_id
-    WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_chart_itemids)
-      AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-      AND c.error::INTEGER == 0
-    """
-    rrt_proc = con.execute(sql_rrt_proc).fetchdf()
-    rrt_chart = con.execute(sql_rrt_chart).fetchdf()
+    
+    rrt_proc = con.execute(RRT_PROC_48H).fetchdf()
+    rrt_chart = con.execute(RRT_CHART_48H).fetchdf()
     rrt = pd.concat([rrt_proc, rrt_chart], ignore_index=True)
 
     flag = rrt.groupby("hadm_id").size().gt(0).astype(int).rename("received_rrt").reset_index()
@@ -419,20 +379,30 @@ def add_received_rrt_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> 
     return cohort_df
 
 
+def add_received_antibiotic_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
+    """Add 0/1 flag 'received_antibiotic' based on PRESCRIPTIONS within 48h of admission."""
+    ab_keywords = ["vancomycin", "zosyn", "piperacillin", "tazobactam", "cefepime", "meropenem", "levofloxacin", "azithromycin", "ceftriaxone", "metronidazole"]
+    pattern = "|".join(ab_keywords)
+
+    con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
+    
+    rx = con.execute(RX_ABX_48H).fetchdf()
+
+    drugs = rx["drug"].astype(str)
+    rx = rx.loc[drugs.str.contains(pattern, case=False, regex=True)]
+    flag = rx.groupby("hadm_id").size().gt(0).astype(int).rename("received_antibiotic").reset_index()
+
+    cohort_df = cohort_df.merge(flag, on="hadm_id", how="left")
+    cohort_df["received_antibiotic"] = cohort_df["received_antibiotic"].fillna(0).astype(int)
+    return cohort_df
+
+
 def add_positive_blood_culture_flag(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.DataFrame:
     """Add 0/1 flag 'positive_blood_culture' from MICROBIOLOGYEVENTS within 48h of admission."""
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
-    sql_micro = f"""
-    SELECT m.hadm_id::INTEGER AS hadm_id
-    FROM microbiologyevents m
-    JOIN admissions a ON m.hadm_id = a.hadm_id AND m.subject_id = a.subject_id
-    WHERE m.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND LOWER(COALESCE(m.spec_type_desc, '')) LIKE '%blood culture%'
-      AND m.org_name IS NOT NULL
-      AND m.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    """
-    micro = con.execute(sql_micro).fetchdf()
+    
+    micro = con.execute(MICRO_BLOOD_48H).fetchdf()
 
     flag = micro.groupby("hadm_id").size().gt(0).astype(int).rename("positive_blood_culture").reset_index()
 
@@ -440,6 +410,8 @@ def add_positive_blood_culture_flag(con, hadm_ids: List[int], cohort_df: pd.Data
     cohort_df["positive_blood_culture"] = cohort_df["positive_blood_culture"].fillna(0).astype(int)
     return cohort_df
 
+
+# ---------- Orchestrator ----------
 
 def extract_raw(con, initial_cohort_csv: str, labs_csv: str, vitals_csv: str) -> Dict[str, pd.DataFrame]:
     """Orchestrate raw extraction for the first-admission cohort."""
@@ -468,9 +440,4 @@ def extract_raw(con, initial_cohort_csv: str, labs_csv: str, vitals_csv: str) ->
     labs = query_labs_48h(con, hadm_ids, labs_csv)
     vitals = query_vitals_48h(con, hadm_ids, vitals_csv)
 
-    return {
-        "cohort": cohort,
-        "labs": labs,
-        "vitals": vitals,
-        "targets": targets,
-    }
+    return {"cohort": cohort, "labs": labs, "vitals": vitals, "targets": targets}
