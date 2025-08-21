@@ -560,10 +560,12 @@ def query_labs_48h(con, hadm_ids: List[int], labs_meta_csv: str) -> pd.DataFrame
     """
     df = con.execute(sql).fetchdf()
 
+    time_diff_hours = (df["charttime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR
+    time_diff_hours = np.maximum(time_diff_hours, 1)
+    df["hour_from_admission"] = (np.ceil(time_diff_hours) - 1).astype(int)
+
     df = df.merge(meta, on="itemid")
     mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
-
-    df["hour_from_admission"] = np.ceil((df["charttime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR).astype(int)
 
     df = df.loc[mask, ["subject_id", "hadm_id", "itemid", "valuenum", "hour_from_admission"]].reset_index(drop=True)
     return df
@@ -593,10 +595,12 @@ def query_vitals_48h(con, hadm_ids: List[int], vitals_meta_csv: str) -> pd.DataF
     """
     df = con.execute(sql).fetchdf()
 
+    time_diff_hours = (df["charttime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR
+    time_diff_hours = np.maximum(time_diff_hours, 1)
+    df["hour_from_admission"] = (np.ceil(time_diff_hours) - 1).astype(int)
+
     df = df.merge(meta, on="itemid")
     mask = (df["valuenum"] >= df["min"]) & (df["valuenum"] <= df["max"])
-
-    df["hour_from_admission"] = np.ceil((df["charttime"] - df["admittime"]).dt.total_seconds() / SECONDS_PER_HOUR).astype(int)
 
     df = df.loc[mask, ["subject_id", "hadm_id", "itemid", "valuenum", "hour_from_admission"]].reset_index(drop=True)
     return df
