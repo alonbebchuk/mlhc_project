@@ -1,0 +1,94 @@
+\documentclass[11pt, a4paper]{article}
+
+% === PACKAGES ===
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+% === METADATA ===
+\title{A Comprehensive Framework for ICU Outcome Prediction: Comparing Temporal Deep Learning and Gradient Boosted Models}
+\author{Alon Bebchuk, Bar Vinizky-Shporn}
+\date{\today}
+
+% === HYPERLINK SETUP ===
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=cyan}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+% === SECTIONS ===
+\section{Introduction and Motivation}
+We develop and evaluate a framework for predicting three critical ICU outcomes using the first 48 hours of hospital admission data: \textbf{(1) in-hospital mortality or death within 30 days post-discharge}, \textbf{(2) prolonged length of stay ($>$ 7 days)}, and \textbf{(3) 30-day hospital readmission post-discharge}.
+
+Our approach uses GRU models with $(X, M)$ tensor representation, where $X$ contains feature values and $M$ indicates missingness patterns. Key contributions include: systematic comparison of Multi-Task Learning (MTL) vs. Single-Task Models (STM), comprehensive multi-modal feature engineering, and thorough clinical evaluation including calibration, fairness, and interpretability analyses. We model outcomes as independent binary classification tasks, acknowledging the simplification of competing risks.
+
+\section{Data Extraction and Cohort Construction}
+
+\subsection{Cohort Selection Criteria}
+The pipeline will begin with the list of \texttt{subject\_id}s from the provided \texttt{initial\_cohort.csv}. The final study cohort will be derived by applying the following inclusion/exclusion criteria:
+\begin{enumerate}
+    \item \textbf{First Hospital Admission Only:} For each \texttt{subject\_id}, only the chronologically first admission based on \texttt{admittime} will be considered. To establish a baseline model on a homogenous cohort and avoid confounding effects from heterogeneous prior admission trajectories, we restricted the study to each patient's first recorded hospital admission.
+    \item \textbf{Age at Admission:} Patients must be between 18 and 89 years old (inclusive). Ages for patients 90 and over are de-identified and shifted in the MIMIC-III database to protect anonymity; therefore, we cap the age at 89 to ensure data accuracy.
+    \item \textbf{Minimum Hospitalization Duration:} The length of stay must be at least 54 hours to ensure a valid 48-hour data window and a 6-hour prediction gap.
+    \item \textbf{Data Availability:} The admission must have associated chart events, as indicated by \texttt{has\_chartevents\_data = 1}.
+    \item \textbf{Valid Prediction Window:} Patients who died within the first 54 hours of admission will be excluded, as targets cannot be validly assessed at the 48-hour mark.
+\end{enumerate}
+
+\section{Feature Engineering Pipeline}
+Features described below will be extracted from data recorded strictly within the first 48 hours of admission.
+
+\subsection{Static Features (Admission-Level Context)}
+\begin{enumerate}
+    \item \textbf{Birth and Death Time:} The date of birth and death for the given patient. Helps to calculate the patient's age.
+    \item \textbf{Demographics:} Age, gender, ethnicity, insurance, marital status, language. Categorical features are one-hot encoded, with rare categories ($<$1\%) collapsed into an "OTHER" bin.
+    \item \textbf{Admission and Discharge Time:} Provides the date and time the patient was admitted and discharged from the hospital.
+    \item \textbf{Admission Context and/or Location:} Admission type (e.g., 'EMERGENCY'), one-hot encoded, or information about the previous location of the patient prior to arriving at the hospital (e.g., 'EMERGENCY ROOM ADMIT').
+    \item \textbf{ICU Admission Time:} Compute the time until the first time a patient was transferred into the ICU. Include a binary flag if it happened in the first 48 hours.
+    \item \textbf{Patient Weight:} The first recorded admission weight (kg) within the 48-hour observation window is used. If no weight is recorded during this period, it is then imputed with the training set median.
+    \item \textbf{Major Interventions \& Organ Support:} Static binary flags indicating receipt of critical interventions within 48 hours. The lists of \texttt{itemid}s and medication strings were compiled based on clinical expert review and established open-source pipelines (using \texttt{CPTEVENTS} and \texttt{PRESCRIPTIONS} tables).
+    Features include:
+    \begin{itemize}
+        \item \texttt{received\_vasopressor}
+        \item \texttt{received\_sedation}
+        \item \texttt{received\_antibiotic}
+        \item \texttt{was\_mechanically\_ventilated}
+        \item \texttt{received\_rrt} (Renal Replacement Therapy)
+    \end{itemize}
+    Also includes binary flags for most microbiology events.
+\end{enumerate}
+
+\subsection{Time-Series Features (First 48 Hours)}
+\begin{enumerate}
+    \item \textbf{Vital Signs:} Heart Rate, Systolic/Diastolic BP, Respiratory Rate, SpO2, Temperature, and Glasgow Coma Scale (GCS) score. Multiple measurements within an hourly bin are aggregated using the mean.
+    \item \textbf{Laboratory Results:} Hemoglobin, White Blood Cell Count, Platelet Count, Sodium, Potassium, BUN, Creatinine, Glucose, Lactate, and INR.
+\end{enumerate}
+
+\section{Data Representation and Preprocessing}
+We use $(X, M)$ tensor representation over 48 hourly bins, where $X_i = \{x_{i1}, \ldots, x_{i48}\}$ contains feature values and $M_i = \{m_{i1}, \ldots, m_{i48}\}$ indicates missingness ($m_{ij,d} = 1$ if missing, 0 if observed).
+
+\textbf{Processing:} Hourly binning with mean aggregation, backward/forward-fill for missing values, global imputation with training mean for completely missing features, standardization, and final concatenation to shape \texttt{[batch\_size, 48, D]}.
+
+\section{Model Architecture and Training}
+
+\subsection{Models}
+\textbf{MTL Model:} Shared GRU backbone with three task-specific heads plus auxiliary reconstruction task for regularization. Uses uncertainty weighting:
+\[ \mathcal{L}_{\text{total}} = \sum_{k} \left( \frac{1}{2\sigma_k^2} \mathcal{L}_k + \frac{1}{2}\log(\sigma_k^2) \right) + \left( \frac{1}{2\sigma_{\text{recon}}^2} \mathcal{L}_{\text{recon}} + \frac{1}{2}\log(\sigma_{\text{recon}}^2) \right) \]
+
+\textbf{STM Models:} Three independent GRU models, each with single task-specific head.
+
+\textbf{GBM Baseline:} Three independent XGBoost models using flattened features (static + time-series summary statistics: mean, median, min, max, stddev).
+
+\subsection{Training}
+80/10/10 train/val/test split. Two-phase approach: hyperparameter search then evaluation with 3-5 random seeds.
+
+\section{Evaluation Protocol}
+\textbf{Naming Convention:} "FULL" indicates models use both feature values $(X)$ and missingness patterns $(M)$, otherwise only $(X)$ is used. "RECON" indicates models include auxiliary next-timestep measurement reconstruction prediction.
+
+\textbf{Ablation Study:} Compare 7 models: (1) GBM baseline, (2) STM-Baseline, (3) MTL-Baseline, (4) STM-Full, (5) MTL-Full, (6) STM-Full-Recon, (7) MTL-Full-Recon.
+
+\textbf{Metrics:} AUROC/AUPR with 95\% CIs, decision curve analysis, calibration (Brier score, reliability diagrams), SHAP interpretability, and fairness analysis across demographic subgroups.
+
+\end{document}
