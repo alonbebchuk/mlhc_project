@@ -17,7 +17,8 @@ def main():
     """Main function to run data extraction locally with Google Drive dataset."""
     con = connect_mimic()
 
-    initial_cohort_csv = "csvs/initial_cohort.csv"
+    # initial_cohort_csv = "csvs/initial_cohort.csv"
+    initial_cohort_csv = "csvs/test_example.csv"
     labs_csv = "csvs/labs_metadata.csv"
     vitals_csv = "csvs/vital_metadata.csv"
 
