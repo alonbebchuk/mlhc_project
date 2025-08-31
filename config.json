@@ -1,0 +1,78 @@
+{
+  "experiment_config": {
+    "batch_size": 32,
+    "num_workers": 4,
+    "hidden_dim": 128,
+    "num_layers": 2,
+    "dropout": 0.3,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "num_epochs": 100,
+    "save_models": true
+  },
+  "data_config": {
+    "sequence_length": 48,
+    "test_size": 0.2,
+    "val_size": 0.125,
+    "random_state": 42,
+    "stratify_column": "mortality"
+  },
+  "model_variants": [
+    {
+      "name": "STM-Baseline",
+      "description": "Single Task Models without reconstruction and without missingness",
+      "model_type": "STM",
+      "use_missingness": false,
+      "use_reconstruction": false
+    },
+    {
+      "name": "MTL-Baseline", 
+      "description": "Multi-Task Learning without reconstruction and without missingness",
+      "model_type": "MTL",
+      "use_missingness": false,
+      "use_reconstruction": false
+    },
+    {
+      "name": "STM-Recon",
+      "description": "Single Task Models with reconstruction but without missingness",
+      "model_type": "STM", 
+      "use_missingness": false,
+      "use_reconstruction": true
+    },
+    {
+      "name": "MTL-Recon",
+      "description": "Multi-Task Learning with reconstruction but without missingness",
+      "model_type": "MTL",
+      "use_missingness": false,
+      "use_reconstruction": true
+    },
+    {
+      "name": "STM-Full-Recon",
+      "description": "Single Task Models with reconstruction and with missingness",
+      "model_type": "STM",
+      "use_missingness": true,
+      "use_reconstruction": true
+    },
+    {
+      "name": "MTL-Full-Recon", 
+      "description": "Multi-Task Learning with reconstruction and with missingness",
+      "model_type": "MTL",
+      "use_missingness": true,
+      "use_reconstruction": true
+    }
+  ],
+  "tasks": [
+    {
+      "name": "mortality",
+      "description": "In-hospital mortality or death within 30 days post-discharge"
+    },
+    {
+      "name": "long_los",
+      "description": "Prolonged length of stay (>7 days)"
+    },
+    {
+      "name": "readmission", 
+      "description": "30-day hospital readmission post-discharge"
+    }
+  ]
+}
