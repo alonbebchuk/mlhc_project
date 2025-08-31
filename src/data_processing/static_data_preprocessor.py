@@ -22,14 +22,14 @@ import pickle
 from typing import Dict, Tuple
 from sklearn.preprocessing import StandardScaler
 
-from .static_data import (
+from static_data import (
     CATEGORICAL_COLUMNS,
     NUMERIC_COLUMNS,
     NUMERIC_COLUMNS_WITH_MISSING,
     BINARY_COLUMNS,
     STATIC_COLUMNS
 )
-from .logging_utils import logger
+from logging_utils import logger
 
 # Minimum frequency threshold for categorical values (1%)
 # Values occurring less frequently are grouped into 'other' category

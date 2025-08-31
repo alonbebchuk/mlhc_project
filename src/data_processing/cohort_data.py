@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Tuple
 
-from .logging_utils import logger
+from logging_utils import logger
 
 # Cohort inclusion criteria constants
 MIN_AGE = 18                    # Minimum patient age in years

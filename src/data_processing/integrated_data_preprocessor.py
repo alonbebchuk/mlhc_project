@@ -23,10 +23,10 @@ import pickle
 from typing import List, Tuple
 from sklearn.model_selection import train_test_split
 
-from .static_data_preprocessor import StaticDataPreprocessor
-from .timeseries_data_preprocessor import TimeSeriesDataPreprocessor
-from .data_extraction import extract_data
-from .logging_utils import logger
+from static_data_preprocessor import StaticDataPreprocessor
+from timeseries_data_preprocessor import TimeSeriesDataPreprocessor
+from data_extraction import extract_data
+from logging_utils import logger
 
 # Dataset splitting configuration
 VALIDATION_SIZE = 0.1    # 10% of training data reserved for validation

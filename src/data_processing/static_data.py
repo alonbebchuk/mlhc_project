@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from typing import List
 
-from .logging_utils import logger
+from logging_utils import logger
 
 # Temporal window configuration
 WINDOW_HOURS = 48           # Observation window in hours from admission

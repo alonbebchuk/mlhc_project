@@ -12,13 +12,14 @@ The module coordinates data extraction across three domains:
 import duckdb
 import numpy as np
 from typing import List, Tuple
-from .cohort_data import get_cohort_hadm_ids_and_targets
-from .static_data import get_static_data
-from .timeseries_data import get_timeseries_data
-from .logging_utils import logger
+from cohort_data import get_cohort_hadm_ids_and_targets
+from static_data import get_static_data
+from timeseries_data import get_timeseries_data
+from logging_utils import logger
 
 # Path to the MIMIC-III DuckDB database file
-DUCKDB_PATH = r"H:\My Drive\MIMIC-III\mimiciii.duckdb"
+DUCKDB_PATH = r"/mnt/c/Users/Barrs/My Drive/MIMIC-III/mimiciii.duckdb"
+# DUCKDB_PATH = r"H:\My Drive\MIMIC-III\mimiciii.duckdb"
 
 
 def extract_data(subject_ids: List[int]) -> Tuple[List[int], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -46,7 +47,7 @@ def extract_data(subject_ids: List[int]) -> Tuple[List[int], np.ndarray, np.ndar
     logger.log_start("extract_data")
     
     # Establish database connection
-    con = duckdb.connect(DUCKDB_PATH)
+    con = duckdb.connect(DUCKDB_PATH, read_only=True)
     
     # Extract cohort and target labels
     hadm_ids, targets = get_cohort_hadm_ids_and_targets(con, subject_ids)

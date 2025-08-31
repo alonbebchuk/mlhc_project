@@ -25,7 +25,7 @@ import pickle
 from typing import Tuple
 from sklearn.preprocessing import StandardScaler
 
-from .logging_utils import logger
+from logging_utils import logger
 
 
 class TimeSeriesDataPreprocessor:

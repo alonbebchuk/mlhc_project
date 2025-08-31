@@ -38,24 +38,24 @@ def main():
     print(f"Vital events: {len(results['vitals'])} records")
     print(f"Target labels: {len(results['targets'])} patients")
 
-    output_dir = "data"
-    os.makedirs(output_dir, exist_ok=True)
+    # output_dir = "data"
+    # os.makedirs(output_dir, exist_ok=True)
 
-    cohort_path = os.path.join(output_dir, "cohort.csv")
-    labs_path = os.path.join(output_dir, "labs.csv")
-    vitals_path = os.path.join(output_dir, "vitals.csv")
-    targets_path = os.path.join(output_dir, "targets.csv")
+    # cohort_path = os.path.join(output_dir, "cohort.csv")
+    # labs_path = os.path.join(output_dir, "labs.csv")
+    # vitals_path = os.path.join(output_dir, "vitals.csv")
+    # targets_path = os.path.join(output_dir, "targets.csv")
 
-    results['cohort'].to_csv(cohort_path, index=False)
-    results['labs'].to_csv(labs_path, index=False)
-    results['vitals'].to_csv(vitals_path, index=False)
-    results['targets'].to_csv(targets_path, index=False)
+    # results['cohort'].to_csv(cohort_path, index=False)
+    # results['labs'].to_csv(labs_path, index=False)
+    # results['vitals'].to_csv(vitals_path, index=False)
+    # results['targets'].to_csv(targets_path, index=False)
 
-    print(f"\nResults saved to CSV files:")
-    print(f"  - Cohort data: {cohort_path} ({len(results['cohort'])} rows)")
-    print(f"  - Labs data: {labs_path} ({len(results['labs'])} rows)")
-    print(f"  - Vitals data: {vitals_path} ({len(results['vitals'])} rows)")
-    print(f"  - Targets data: {targets_path} ({len(results['targets'])} rows)")
+    # print(f"\nResults saved to CSV files:")
+    # print(f"  - Cohort data: {cohort_path} ({len(results['cohort'])} rows)")
+    # print(f"  - Labs data: {labs_path} ({len(results['labs'])} rows)")
+    # print(f"  - Vitals data: {vitals_path} ({len(results['vitals'])} rows)")
+    # print(f"  - Targets data: {targets_path} ({len(results['targets'])} rows)")
 
     print("\n--- Cohort Sample ---")
     print(results['cohort'].head())
