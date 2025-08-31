@@ -1,9 +1,9 @@
-# import duckdb
+import duckdb
 # import io
 import os
 # import pickle
 # import pandas as pd
-# from pathlib import Path
+from pathlib import Path
 # from google.auth.transport.requests import Request
 # from google_auth_oauthlib.flow import InstalledAppFlow
 # from googleapiclient.discovery import build
@@ -15,7 +15,14 @@ from cohort_constractions import extract_raw
 
 def main():
     """Main function to run data extraction locally with Google Drive dataset."""
-    con = connect_mimic()
+    db = Path("/mnt/c/Users/Barrs/My Drive/MIMIC-III/mimiciii.duckdb")
+    # assert db.exists(), f"DB not found at {db}"
+
+    con = duckdb.connect(str(db), read_only=True)
+
+    # sanity checks
+    print(con.execute("PRAGMA database_list").fetchdf())
+    print(con.execute("SHOW TABLES").fetchdf().head())
 
     # initial_cohort_csv = "csvs/initial_cohort.csv"
     initial_cohort_csv = "csvs/test_example.csv"
