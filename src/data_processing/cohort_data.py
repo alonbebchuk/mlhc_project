@@ -55,6 +55,11 @@ COHORT_SQL = f"""
             -- Calculate time from discharge to next admission (for readmission outcome)
             EXTRACT(epoch FROM (LEAD(a.admittime::TIMESTAMP) OVER (PARTITION BY a.subject_id ORDER BY a.admittime) - a.dischtime::TIMESTAMP)) / {SECONDS_PER_HOUR} AS discharge_to_readmission_hours,
             -- Rank admissions chronologically for each patient
+            -- hours from *admission* to in-hospital death (NULL if no in-hospital death recorded)
+            CASE WHEN a.deathtime IS NOT NULL
+                THEN EXTRACT(epoch FROM (a.deathtime::TIMESTAMP - a.admittime::TIMESTAMP)) / {SECONDS_PER_HOUR}
+                ELSE NULL
+            END AS hours_to_death_admit,
             ROW_NUMBER() OVER (PARTITION BY a.subject_id ORDER BY a.admittime) AS admission_rank
         FROM admissions a
         JOIN patients p ON a.subject_id = p.subject_id
@@ -68,6 +73,7 @@ COHORT_SQL = f"""
           AND age BETWEEN {MIN_AGE} AND {MAX_AGE}   -- Age 18-89 years
           AND los_hours >= {MIN_LOS_HOURS}          -- Minimum 54 hours LOS
           AND has_chartevents_data = 1              -- Must have chart events data
+          AND (hours_to_death_admit IS NULL OR hours_to_death_admit > {MIN_LOS_HOURS})   --Exclude deaths within first 54h of *admission*
     )
     -- Generate binary target labels for three outcomes
     SELECT 
