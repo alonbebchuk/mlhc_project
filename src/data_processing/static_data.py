@@ -27,12 +27,18 @@ WINDOW_HOURS = 48           # Observation window in hours from admission
 # Unit conversion factors for anthropometric measurements
 IN_TO_CM_FACTOR = 2.54      # Inches to centimeters conversion
 LB_TO_KG_FACTOR = 0.45359237  # Pounds to kilograms conversion
+OZ_TO_KG_FACTOR = 0.0283495231  # Oz to kilograms conversion
 
 # MIMIC-III item IDs for anthropometric measurements
-HEIGHT_IN_ITEMIDS = [920, 1394]        # Height measurements in inches
-HEIGHT_CM_ITEMIDS = [226730]           # Height measurements in centimeters  
-WEIGHT_KG_ITEMIDS = [763, 3580, 226512, 224639]  # Weight measurements in kilograms
-WEIGHT_LB_ITEMIDS = [3581, 226531]     # Weight measurements in pounds
+HEIGHT_IN_ITEMIDS = [920, 1394, 4187, 3486, 226707]        # Height measurements in inches
+HEIGHT_CM_ITEMIDS = [3485, 4188]           # Height measurements in centimeters  
+WEIGHT_KG_ITEMIDS = [762, 763, 3723, 3580, 226512, 224639]  # Weight measurements in kilograms
+WEIGHT_LB_ITEMIDS = [3581]     # Weight measurements in pounds
+WEIGHT_OZ_ITEMIDS = [3582]     # Weight measurements in oz
+# HEIGHT_IN_ITEMIDS = [920, 1394]        # Height measurements in inches
+# HEIGHT_CM_ITEMIDS = [226730]           # Height measurements in centimeters  
+# WEIGHT_KG_ITEMIDS = [763, 3580, 226512, 224639]  # Weight measurements in kilograms
+# WEIGHT_LB_ITEMIDS = [3581, 226531]     # Weight measurements in pounds
 
 # MIMIC-III item IDs for clinical interventions
 # Vasopressor administration (cardiovascular and metavision systems)
@@ -82,16 +88,29 @@ STATIC_SQL = f"""
             c.hadm_id,
             CASE 
                 WHEN c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_lb_itemids) THEN c.valuenum::DOUBLE * {LB_TO_KG_FACTOR}
+                WHEN c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_oz_itemids) THEN c.valuenum::DOUBLE * {OZ_TO_KG_FACTOR}
                 ELSE c.valuenum::DOUBLE 
             END AS weight
         FROM chartevents c
         JOIN admissions a ON c.hadm_id = a.hadm_id
             WHERE c.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-            AND (c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_kg_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_lb_itemids))
+            AND (c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_kg_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_lb_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_oz_itemids))
             AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
             AND c.valuenum IS NOT NULL
             AND c.error = 0
         ORDER BY c.hadm_id, c.charttime
+    ),
+    icu_48h AS (
+        -- Earliest ICU intime within the first {WINDOW_HOURS} hours of hospital admission
+        SELECT 
+            i.hadm_id,
+            MIN(i.intime)::TIMESTAMP AS first_icu_intime
+        FROM icustays i
+        JOIN admissions a ON i.hadm_id = a.hadm_id
+        WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+          AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP 
+                                      AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+        GROUP BY i.hadm_id
     )
     -- Main query: extract comprehensive static patient features
     SELECT 
@@ -109,7 +128,11 @@ STATIC_SQL = f"""
         -- Anthropometric measurements (may be NULL if not recorded)
         COALESCE(h.height) AS height,        -- Height in centimeters
         COALESCE(w.weight) AS weight,        -- Weight in kilograms
+        datediff('hour', a.admittime::TIMESTAMP, icu.first_icu_intime)
+          AS hours_to_first_icu,             -- Time (in hours) from hospital admission to first ICU intime
         -- Clinical intervention indicators (binary features within observation window)
+        -- Reached ICU (any time)
+        CASE WHEN icu.first_icu_intime IS NOT NULL THEN 1 ELSE 0 END AS reached_icu,
         -- Vasopressor administration: Check both CareVue and MetaVision systems
         CASE WHEN EXISTS (
             SELECT 1 FROM inputevents_cv ie 
@@ -164,20 +187,22 @@ STATIC_SQL = f"""
             WHERE p.hadm_id = a.hadm_id 
               AND LOWER(COALESCE(p.drug, '')) ~ '{ANTIBIOTIC_REGEX}'
               AND p.startdate::DATE BETWEEN a.admittime::DATE AND (a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS)::DATE
-        ) THEN 1 ELSE 0 END AS received_antibiotic,
-        -- ICU admission: Check if patient was admitted to ICU within observation window
-        CASE WHEN EXISTS (
-            SELECT 1 FROM icustays i 
-            WHERE i.hadm_id = a.hadm_id 
-              AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-        ) THEN 1 ELSE 0 END AS reached_icu
+        ) THEN 1 ELSE 0 END AS received_antibiotic
     FROM admissions a
     JOIN patients p ON a.subject_id = p.subject_id
     LEFT JOIN height_data h ON a.hadm_id = h.hadm_id
     LEFT JOIN weight_data w ON a.hadm_id = w.hadm_id
+    LEFT JOIN icu_48h icu ON a.hadm_id = icu.hadm_id
     WHERE a.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
     ORDER BY a.hadm_id
     """
+# icu.first_icu_intime,                -- Earliest ICU intime (nullable)
+        # -- ICU admission: Check if patient was admitted to ICU within observation window
+        # CASE WHEN EXISTS (
+        #     SELECT 1 FROM icustays i 
+        #     WHERE i.hadm_id = a.hadm_id 
+        #       AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+        # ) THEN 1 ELSE 0 END AS reached_icu
 
 # Column definitions for static features organized by data type
 # These lists define the expected structure of extracted static data
@@ -202,7 +227,8 @@ NUMERIC_COLUMNS_WITHOUT_MISSING = [
 # Numeric features that may have missing values requiring imputation
 NUMERIC_COLUMNS_WITH_MISSING = [
     "height",             # Height in centimeters (may not be recorded)
-    "weight"              # Weight in kilograms (may not be recorded)
+    "weight",              # Weight in kilograms (may not be recorded)
+    "hours_to_first_icu"  # Hours to first icu admmision time in the interval time
 ]
 
 # All numeric columns (with and without missing values)
@@ -259,6 +285,7 @@ def get_static_data(con: duckdb.DuckDBPyConnection, hadm_ids: List[int]) -> np.n
     con.register("tmp_height_cm_itemids", pd.DataFrame({"itemid": HEIGHT_CM_ITEMIDS}))
     con.register("tmp_weight_kg_itemids", pd.DataFrame({"itemid": WEIGHT_KG_ITEMIDS}))
     con.register("tmp_weight_lb_itemids", pd.DataFrame({"itemid": WEIGHT_LB_ITEMIDS}))
+    con.register("tmp_weight_oz_itemids", pd.DataFrame({"itemid": WEIGHT_OZ_ITEMIDS}))
     con.register("tmp_vaso_cv_itemids", pd.DataFrame({"itemid": VASOPRESSOR_CV_ITEMIDS}))
     con.register("tmp_vaso_mv_itemids", pd.DataFrame({"itemid": VASOPRESSOR_MV_ITEMIDS}))
     con.register("tmp_vent_proc_itemids", pd.DataFrame({"itemid": VENTILATION_PROCEDURE_ITEMIDS}))
