@@ -54,12 +54,12 @@ COHORT_SQL = f"""
             EXTRACT(epoch FROM (p.dod::TIMESTAMP - a.dischtime::TIMESTAMP)) / {SECONDS_PER_HOUR} AS discharge_to_death_hours,
             -- Calculate time from discharge to next admission (for readmission outcome)
             EXTRACT(epoch FROM (LEAD(a.admittime::TIMESTAMP) OVER (PARTITION BY a.subject_id ORDER BY a.admittime) - a.dischtime::TIMESTAMP)) / {SECONDS_PER_HOUR} AS discharge_to_readmission_hours,
-            -- Rank admissions chronologically for each patient
-            -- hours from *admission* to in-hospital death (NULL if no in-hospital death recorded)
+            -- Hours from *admission* to in-hospital death (NULL if no in-hospital death recorded)
             CASE WHEN a.deathtime IS NOT NULL
                 THEN EXTRACT(epoch FROM (a.deathtime::TIMESTAMP - a.admittime::TIMESTAMP)) / {SECONDS_PER_HOUR}
                 ELSE NULL
             END AS hours_to_death_admit,
+            -- Rank admissions chronologically for each patient
             ROW_NUMBER() OVER (PARTITION BY a.subject_id ORDER BY a.admittime) AS admission_rank
         FROM admissions a
         JOIN patients p ON a.subject_id = p.subject_id
