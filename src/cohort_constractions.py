@@ -365,9 +365,10 @@ def add_first_weight(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
     Add first recorded weight (converted to kg) within WINDOW_HOURS (48h).
     Uses WEIGHT_48H; supports kg and lb itemids; keeps the earliest value.
     """
-    weight_kg_itemids = [762, 763, 3723, 3580, 226512]
+    weight_kg_itemids = [762, 763, 3723, 3580, 226512, 224639]
     weight_lb_itemids = [3581, 226531]
-    weight_itemids = weight_kg_itemids + weight_lb_itemids
+    weight_oz_itemids = [3582]
+    weight_itemids = weight_kg_itemids + weight_lb_itemids + weight_oz_itemids
 
     con.register("tmp_hadm_ids", pd.DataFrame({"hadm_id": hadm_ids}))
     con.register("tmp_weight_itemids", pd.DataFrame({"itemid": weight_itemids}))
@@ -378,6 +379,8 @@ def add_first_weight(con, hadm_ids: List[int], cohort_df: pd.DataFrame) -> pd.Da
     w["weight_kg"] = w["valuenum"].astype(float)
     lb_mask = w["itemid"].isin(weight_lb_itemids)
     w.loc[lb_mask, "weight_kg"] = w.loc[lb_mask, "weight_kg"] * 0.45359237
+    oz_mask = w["itemid"].isin(weight_oz_itemids)
+    w.loc[oz_mask, "weight_kg"] = w.loc[oz_mask, "weight_kg"] * 0.0283495231
     w = w.sort_values(["hadm_id", "charttime"]).groupby("hadm_id", as_index=False).head(1)[["hadm_id", "weight_kg"]]
 
     cohort_df = cohort_df.merge(w, on="hadm_id", how="left")

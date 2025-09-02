@@ -61,13 +61,24 @@ VITQUER = f"""
     """
 
 ICU_INTIME = f"""
-    SELECT i.hadm_id::INTEGER AS hadm_id,
-           MIN(i.intime)::TIMESTAMP AS first_icu_intime
-    FROM icustays i
-    JOIN admissions a ON i.hadm_id = a.hadm_id
-    WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
-      AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-    GROUP BY i.hadm_id
+    WITH first_icu AS (
+            SELECT
+                i.hadm_id,
+                MIN(i.intime)::TIMESTAMP AS first_icu_intime
+            FROM icustays i
+            JOIN admissions a ON i.hadm_id = a.hadm_id
+            WHERE i.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
+              AND i.intime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP 
+                                          AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+            GROUP BY i.hadm_id
+        )
+        SELECT
+            a.hadm_id::INTEGER AS hadm_id,
+            fi.first_icu_intime,
+            datediff('hour', a.admittime::TIMESTAMP, fi.first_icu_intime) AS hours_to_first_icu,             -- Time (in hours) from hospital admission to first ICU intime
+        FROM admissions a
+        LEFT JOIN first_icu fi ON a.hadm_id = fi.hadm_id
+        WHERE a.hadm_id::INTEGER IN (SELECT hadm_id FROM tmp_hadm_ids)
     """
 
 # ---- height / weight (first 48h) ----
