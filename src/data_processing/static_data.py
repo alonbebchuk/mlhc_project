@@ -41,10 +41,6 @@ WEIGHT_OZ_ITEMIDS = [3582]     # Weight measurements in oz
 # WEIGHT_LB_ITEMIDS = [3581, 226531]     # Weight measurements in pounds
 
 # MIMIC-III item IDs for clinical interventions
-# Vasopressor administration (cardiovascular and metavision systems)
-VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30312, 30051, 30043, 30307, 30042, 30306]
-VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653]
-
 # Mechanical ventilation (procedure events and chart events)
 VENTILATION_PROCEDURE_ITEMIDS = [225468, 224385, 224391]
 VENTILATION_CHART_ITEMIDS = [224684, 224685, 224686, 220339, 505, 506, 60, 444, 224695, 218, 224738, 223834, 467]
@@ -53,9 +49,23 @@ VENTILATION_CHART_ITEMIDS = [224684, 224685, 224686, 220339, 505, 506, 60, 444, 
 RRT_PROCEDURE_ITEMIDS = [225802, 225803, 225805, 224270]
 RRT_CHART_ITEMIDS = [226499, 227357, 152, 224149, 582]
 
+# Vasopressor administration (cardiovascular and metavision systems)
+VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
+VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653, 221986]
+# --  List of vasopressor administration drugs:
+# --  norepinephrine - 30047,30120,221906
+# --  epinephrine - 30044,30119,30309,221289
+# --  phenylephrine - 30127,30128,221749
+# --  vasopressin - 30051,222315 (42273, 42802 also for 2 patients)
+# --  dopamine - 30043,30307,221662
+# --  dobutamine - 30042,30306,221653
+# --  milrinone - 30125,221986
+
 # Sedation administration (cardiovascular and metavision systems)
-SEDATION_CV_ITEMIDS = [30131, 30124, 30166, 30121]
-SEDATION_MV_ITEMIDS = [222168, 225150, 221385, 221668]
+SEDATION_CV_ITEMIDS = [30118, 30124, 30126, 30131, 30149, 30150, 30151, 30153, 30167, 30308, 41516, 41733, 41962, 42062, 42407, 42596, 42669, 43136, 43387, 45476, 45520, 45563, 45573, 46301]
+SEDATION_MV_ITEMIDS = [221385, 221623, 221668, 221712, 221744, 221833, 222168, 225150, 225154, 225156, 225942, 225972]
+# SEDATION_CV_ITEMIDS = [30131, 30124, 30166, 30121]
+# SEDATION_MV_ITEMIDS = [222168, 225150, 221385, 221668]
 
 # Regular expression pattern to identify antibiotic medications
 # Covers major antibiotic classes: beta-lactams, aminoglycosides, fluoroquinolones, etc.
@@ -133,18 +143,6 @@ STATIC_SQL = f"""
         -- Clinical intervention indicators (binary features within observation window)
         -- Reached ICU (any time)
         CASE WHEN icu.first_icu_intime IS NOT NULL THEN 1 ELSE 0 END AS reached_icu,
-        -- Vasopressor administration: Check both CareVue and MetaVision systems
-        CASE WHEN EXISTS (
-            SELECT 1 FROM inputevents_cv ie 
-            WHERE ie.hadm_id = a.hadm_id 
-              AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_cv_itemids)
-              AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-        ) OR EXISTS (
-            SELECT 1 FROM inputevents_mv ie 
-            WHERE ie.hadm_id = a.hadm_id 
-              AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_mv_itemids)
-              AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-        ) THEN 1 ELSE 0 END AS received_vasopressor,
         -- Mechanical ventilation: Check both procedure events and chart events
         CASE WHEN EXISTS (
             SELECT 1 FROM procedureevents_mv pe 
@@ -169,6 +167,18 @@ STATIC_SQL = f"""
               AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_chart_itemids)
               AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
         ) THEN 1 ELSE 0 END AS received_rrt,
+        -- Vasopressor administration: Check both CareVue and MetaVision systems
+        CASE WHEN EXISTS (
+            SELECT 1 FROM inputevents_cv ie 
+            WHERE ie.hadm_id = a.hadm_id 
+              AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_cv_itemids)
+              AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+        ) OR EXISTS (
+            SELECT 1 FROM inputevents_mv ie 
+            WHERE ie.hadm_id = a.hadm_id 
+              AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_mv_itemids)
+              AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+        ) THEN 1 ELSE 0 END AS received_vasopressor,
         -- Sedation administration: Check both CareVue and MetaVision systems
         CASE WHEN EXISTS (
             SELECT 1 FROM inputevents_cv ie 
