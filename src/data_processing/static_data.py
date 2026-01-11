@@ -64,6 +64,23 @@ VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653, 221986
 # Sedation administration (cardiovascular and metavision systems)
 SEDATION_CV_ITEMIDS = [30118, 30124, 30126, 30131, 30149, 30150, 30151, 30153, 30167, 30308, 41516, 41733, 41962, 42062, 42407, 42596, 42669, 43136, 43387, 45476, 45520, 45563, 45573, 46301]
 SEDATION_MV_ITEMIDS = [221385, 221623, 221668, 221712, 221744, 221833, 222168, 225150, 225154, 225156, 225942, 225972]
+# -- List of sedation / analgosedation drugs:
+# -- Benzodiazepines
+# --   midazolam (Versed)          - CV: 30124,41516,45476,45520 | MV: 221668
+# --   lorazepam (Ativan)          - MV: 221385
+# --   diazepam (Valium)           - MV: 221623
+# -- Hypnotic sedatives
+# --   propofol                    - CV: 30131 | MV: 222168
+# --   dexmedetomidine (Precedex)  - CV: 30167,41962,42062,42407,43136,46301 | MV: 225150
+# --   ketamine                    - CV: 30151,42669,45563,45573 | MV: 221712
+# -- Opioids (analgosedation)
+# --   fentanyl                    - CV: 30118,30149,30150,30308,43387 | MV: 221744,225942,225972
+# --   morphine sulfate            - CV: 30126,30153 | MV: 225154
+# --   hydromorphone (Dilaudid)    - MV: 221833
+# -- Barbiturates (deep sedation)
+# --   phenobarbital               - CV: 41733
+# --   pentobarbital               - CV: 42596 | MV: 225156
+
 # SEDATION_CV_ITEMIDS = [30131, 30124, 30166, 30121]
 # SEDATION_MV_ITEMIDS = [222168, 225150, 221385, 221668]
 
