@@ -31,9 +31,9 @@ OZ_TO_KG_FACTOR = 0.0283495231  # Oz to kilograms conversion
 
 # MIMIC-III item IDs for anthropometric measurements
 HEIGHT_IN_ITEMIDS = [920, 1394, 4187, 3486, 226707]        # Height measurements in inches
-HEIGHT_CM_ITEMIDS = [3485, 4188]           # Height measurements in centimeters  
-WEIGHT_KG_ITEMIDS = [762, 763, 3723, 3580, 226512, 224639]  # Weight measurements in kilograms
-WEIGHT_LB_ITEMIDS = [3581]     # Weight measurements in pounds
+HEIGHT_CM_ITEMIDS = [3485, 4188, 226730]           # Height measurements in centimeters  
+WEIGHT_KG_ITEMIDS = [762, 763, 3723, 3580, 3693, 226512, 224639]  # Weight measurements in kilograms
+WEIGHT_LB_ITEMIDS = [3581, 226531]     # Weight measurements in pounds
 WEIGHT_OZ_ITEMIDS = [3582]     # Weight measurements in oz
 # HEIGHT_IN_ITEMIDS = [920, 1394]        # Height measurements in inches
 # HEIGHT_CM_ITEMIDS = [226730]           # Height measurements in centimeters  
@@ -44,13 +44,20 @@ WEIGHT_OZ_ITEMIDS = [3582]     # Weight measurements in oz
 # Mechanical ventilation (procedure events and chart events)
 VENTILATION_PROCEDURE_ITEMIDS = [225468, 224385, 224391]
 VENTILATION_CHART_ITEMIDS = [224684, 224685, 224686, 220339, 505, 506, 60, 444, 224695, 218, 224738, 223834, 467]
+# # Added 225792 (Standard Invasive Vent Procedure)
+# VENTILATION_PROCEDURE_ITEMIDS = [225468, 224385, 224391, 225792]
+# # Added 720 (Mode CV), 223849 (Mode MV), 223848 (Type MV) for better coverage
+# VENTILATION_CHART_ITEMIDS = [
+#     224684, 224685, 224686, 220339, 505, 506, 60, 444, 224695, 218, 
+#     224738, 223834, 467, 720, 223849, 223848
+# ]
 
 # Renal replacement therapy (RRT) - procedure and chart events
 RRT_PROCEDURE_ITEMIDS = [225802, 225803, 225805, 224270]
 RRT_CHART_ITEMIDS = [226499, 227357, 152, 224149, 582]
 
 # Vasopressor administration (cardiovascular and metavision systems)
-VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
+VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30128, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
 VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653, 221986]
 # --  List of vasopressor administration drugs:
 # --  norepinephrine - 30047,30120,221906
@@ -106,6 +113,7 @@ STATIC_SQL = f"""
             AND (c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_in_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_cm_itemids))
             AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
             AND c.valuenum IS NOT NULL
+            AND c.valuenum > 0
             AND c.error = 0
         ORDER BY c.hadm_id, c.charttime
     ),
@@ -124,6 +132,7 @@ STATIC_SQL = f"""
             AND (c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_kg_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_lb_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_oz_itemids))
             AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
             AND c.valuenum IS NOT NULL
+            AND c.valuenum > 0
             AND c.error = 0
         ORDER BY c.hadm_id, c.charttime
     ),
