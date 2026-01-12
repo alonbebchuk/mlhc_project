@@ -48,7 +48,25 @@ VENTILATION_CHART_ITEMIDS = [
 
 # Renal replacement therapy (RRT) - procedure and chart events
 RRT_PROCEDURE_ITEMIDS = [225802, 225803, 225805, 224270]
-RRT_CHART_ITEMIDS = [226499, 227357, 152, 224149, 582]
+# Procedure Events:
+# No changes needed based on your check, but ensure these are in:
+# 225802: Dialysis - CRRT
+# 225803: Dialysis - CVVHD
+# 225805: Peritoneal Dialysis
+# 224270: Dialysis - Hemodialysis
+RRT_CHART_ITEMIDS = [
+    152, 226499, 227357, 224149, 582,  # Your original ones
+    225126,  # Dialysis patient (Important flag)
+    225953, 225954, 225956, 225958, 225960, 225962  # Peritoneal Dialysis Solutions
+]
+# Chart Events:
+# - Kept 152 (Dialysis Type), 226499 (Hemodialysis Output)
+# - Added 225126 (Dialysis patient - Strong proxy)
+# - Added 225953 (Solution Peritoneal Dialysis)
+# - Added 227357 (Dialysis Catheter Dressing - weaker, but you had it, so we keep it)
+
+# RRT_PROCEDURE_ITEMIDS = [225802, 225803, 225805, 224270]
+# RRT_CHART_ITEMIDS = [226499, 227357, 152, 224149, 582]
 
 # Vasopressor administration (cardiovascular and metavision systems)
 VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30128, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
