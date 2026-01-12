@@ -35,22 +35,16 @@ HEIGHT_CM_ITEMIDS = [3485, 4188, 226730]           # Height measurements in cent
 WEIGHT_KG_ITEMIDS = [762, 763, 3723, 3580, 3693, 226512, 224639]  # Weight measurements in kilograms
 WEIGHT_LB_ITEMIDS = [3581, 226531]     # Weight measurements in pounds
 WEIGHT_OZ_ITEMIDS = [3582]     # Weight measurements in oz
-# HEIGHT_IN_ITEMIDS = [920, 1394]        # Height measurements in inches
-# HEIGHT_CM_ITEMIDS = [226730]           # Height measurements in centimeters  
-# WEIGHT_KG_ITEMIDS = [763, 3580, 226512, 224639]  # Weight measurements in kilograms
-# WEIGHT_LB_ITEMIDS = [3581, 226531]     # Weight measurements in pounds
 
 # MIMIC-III item IDs for clinical interventions
 # Mechanical ventilation (procedure events and chart events)
-VENTILATION_PROCEDURE_ITEMIDS = [225468, 224385, 224391]
-VENTILATION_CHART_ITEMIDS = [224684, 224685, 224686, 220339, 505, 506, 60, 444, 224695, 218, 224738, 223834, 467]
-# # Added 225792 (Standard Invasive Vent Procedure)
-# VENTILATION_PROCEDURE_ITEMIDS = [225468, 224385, 224391, 225792]
-# # Added 720 (Mode CV), 223849 (Mode MV), 223848 (Type MV) for better coverage
-# VENTILATION_CHART_ITEMIDS = [
-#     224684, 224685, 224686, 220339, 505, 506, 60, 444, 224695, 218, 
-#     224738, 223834, 467, 720, 223849, 223848
-# ]
+VENTILATION_PROCEDURE_ITEMIDS = [225792, 225468, 224385, 224391]
+# VENTILATION_PROCEDURE_ITEMIDS = [225792, 225468, 224385, 224391, 225794] # for capture any respiratory support (mask or tube - CPAP or BiPAP via mask)
+VENTILATION_CHART_ITEMIDS = [
+    224684, 224685, 224686, 220339, 505, 506, 60, 444, 224695, 218, 
+    224738, 223834, 467,
+    720, 223849, 223848, 722
+]
 
 # Renal replacement therapy (RRT) - procedure and chart events
 RRT_PROCEDURE_ITEMIDS = [225802, 225803, 225805, 224270]
