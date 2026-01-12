@@ -105,7 +105,8 @@ SEDATION_MV_ITEMIDS = [221385, 221623, 221668, 221712, 221744, 221833, 222168, 2
 
 # Regular expression pattern to identify antibiotic medications
 # Covers major antibiotic classes: beta-lactams, aminoglycosides, fluoroquinolones, etc.
-ANTIBIOTIC_REGEX = r'(amoxicillin|ampicillin|oxacillin|penicillin|piperacillin|tazobactam|zosyn|cefazolin|cefepime|ceftazidime|ceftriaxone|cefuroxime|meropenem|imipenem|ertapenem|vancomycin|amikacin|gentamicin|tobramycin|azithromycin|ciprofloxacin|levofloxacin|clindamycin|doxycycline|metronidazole|rifampin|daptomycin|linezolid)'
+ANTIBIOTIC_REGEX = r'(amoxicillin|ampicillin|oxacillin|penicillin|piperacillin|tazobactam|zosyn|cefazolin|cefepime|ceftazidime|ceftriaxone|cefuroxime|meropenem|imipenem|ertapenem|vancomycin|amikacin|gentamicin|tobramycin|azithromycin|ciprofloxacin|levofloxacin|clindamycin|doxycycline|metronidazole|rifampin|daptomycin|linezolid|sulfamethoxazole|trimethoprim|erythromycin|nafcillin)'
+# ANTIBIOTIC_REGEX = r'(amoxicillin|ampicillin|oxacillin|penicillin|piperacillin|tazobactam|zosyn|cefazolin|cefepime|ceftazidime|ceftriaxone|cefuroxime|meropenem|imipenem|ertapenem|vancomycin|amikacin|gentamicin|tobramycin|azithromycin|ciprofloxacin|levofloxacin|clindamycin|doxycycline|metronidazole|rifampin|daptomycin|linezolid)'
 
 # SQL query to extract static patient features within the observation window
 # This complex query extracts demographics, anthropometric data, and clinical interventions
@@ -241,6 +242,8 @@ STATIC_SQL = f"""
             WHERE p.hadm_id = a.hadm_id 
               AND LOWER(COALESCE(p.drug, '')) ~ '{ANTIBIOTIC_REGEX}'
               AND p.startdate::DATE BETWEEN a.admittime::DATE AND (a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS)::DATE
+              -- SAFETY: Exclude Eye/Ear/Topical routes
+              AND LOWER(COALESCE(p.route, '')) NOT IN ('ou', 'os', 'od', 'au', 'as', 'ad', 'tp', 'topical', 'cream', 'lotion', 'oint', 'eye', 'ear')
         ) THEN 1 ELSE 0 END AS received_antibiotic
     FROM admissions a
     JOIN patients p ON a.subject_id = p.subject_id
