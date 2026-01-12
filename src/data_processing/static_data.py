@@ -192,6 +192,10 @@ STATIC_SQL = f"""
             WHERE c.hadm_id = a.hadm_id 
               AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_vent_chart_itemids)
               AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+              -- SAFETY CHECK: Ignore rows marked as errors
+              AND (c.error IS DISTINCT FROM 1)
+              -- OPTIONAL: For PEEP, ensure value is not 0 (rarely needed but safer)
+              -- AND (c.valuenum IS NULL OR c.valuenum > 0)
         ) THEN 1 ELSE 0 END AS recieved_mechanical_ventilation,
         -- Renal replacement therapy (RRT): Check both procedure and chart events
         CASE WHEN EXISTS (
@@ -204,6 +208,8 @@ STATIC_SQL = f"""
             WHERE c.hadm_id = a.hadm_id 
               AND c.itemid::INTEGER IN (SELECT itemid FROM tmp_rrt_chart_itemids)
               AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+              -- SAFETY CHECK: Ignore rows marked as errors
+              AND (c.error IS DISTINCT FROM 1)
         ) THEN 1 ELSE 0 END AS received_rrt,
         -- Vasopressor administration: Check both CareVue and MetaVision systems
         CASE WHEN EXISTS (
