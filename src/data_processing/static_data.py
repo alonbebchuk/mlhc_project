@@ -70,8 +70,8 @@ RRT_CHART_ITEMIDS = [
 # Vasopressor administration (cardiovascular and metavision systems)
 # VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30128, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
 # VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653, 221986]
-VASOPRESSOR_CV_ITEMIDS = ['30128', '30120', '30043', '30051', '30125', '30119', '30042', '30307', '30047', '30127', '30306', '30044', '30309', '42273', '42802']
-VASOPRESSOR_MV_ITEMIDS = ['221749', '221906', '221662', '221289', '221986', '222315', '221653']
+VASOPRESSOR_CV_ITEMIDS = [30128, 30120, 30043, 30051, 30125, 30119, 30042, 30307, 30047, 30127, 30306, 30044, 30309, 42273, 42802]
+VASOPRESSOR_MV_ITEMIDS = [221749, 221906, 221662, 221289, 221986, 222315, 221653]
 # --  List of vasopressor administration drugs:
 # --  norepinephrine - 30047,30120,221906
 # --  epinephrine - 30044,30119,30309,221289
@@ -124,7 +124,7 @@ STATIC_SQL = f"""
             AND (c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_in_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_height_cm_itemids))
             AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
             AND c.valuenum IS NOT NULL
-            AND c.valuenum > 0
+            AND c.valuenum::DOUBLE > 0
             AND c.error = 0
         ORDER BY c.hadm_id, c.charttime
     ),
@@ -143,7 +143,7 @@ STATIC_SQL = f"""
             AND (c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_kg_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_lb_itemids) OR c.itemid::INTEGER IN (SELECT itemid FROM tmp_weight_oz_itemids))
             AND c.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
             AND c.valuenum IS NOT NULL
-            AND c.valuenum > 0
+            AND c.valuenum::DOUBLE > 0
             AND c.error = 0
         ORDER BY c.hadm_id, c.charttime
     ),
@@ -216,13 +216,13 @@ STATIC_SQL = f"""
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_cv_itemids)
               AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-              AND (ie.rate > 0 OR ie.amount > 0)
+              AND (ie.rate::DOUBLE > 0 OR ie.amount::DOUBLE > 0)
         ) OR EXISTS (
             SELECT 1 FROM inputevents_mv ie 
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_mv_itemids)
               AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
-              AND (ie.rate > 0 OR ie.amount > 0)
+              AND (ie.rate::DOUBLE > 0 OR ie.amount::DOUBLE > 0)
               AND ie.statusdescription != 'Rewritten'
         ) THEN 1 ELSE 0 END AS received_vasopressor,
         -- Sedation administration: Check both CareVue and MetaVision systems
@@ -232,14 +232,14 @@ STATIC_SQL = f"""
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_cv_itemids)
               AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
               -- SAFETY CHECK: Ensure drug was actually given (rate > 0 or amount > 0)
-              AND (ie.rate > 0 OR ie.amount > 0)
+              AND (ie.rate::DOUBLE > 0 OR ie.amount::DOUBLE > 0)
         ) OR EXISTS (
             SELECT 1 FROM inputevents_mv ie 
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_mv_itemids)
               AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
               -- SAFETY CHECK: MetaVision uses 'statusdescription' usually, but amount check is safer
-              AND (ie.rate > 0 OR ie.amount > 0)
+              AND (ie.rate::DOUBLE > 0 OR ie.amount::DOUBLE > 0)
               AND ie.statusdescription != 'Rewritten' -- Ignore error/rewritten rows in MV
         ) THEN 1 ELSE 0 END AS received_sedation,
         -- Antibiotic administration: Check prescriptions using regex pattern matching
