@@ -49,7 +49,6 @@ VENTILATION_CHART_ITEMIDS = [
 # Renal replacement therapy (RRT) - procedure and chart events
 RRT_PROCEDURE_ITEMIDS = [225802, 225803, 225805, 224270]
 # Procedure Events:
-# No changes needed based on your check, but ensure these are in:
 # 225802: Dialysis - CRRT
 # 225803: Dialysis - CVVHD
 # 225805: Peritoneal Dialysis
@@ -99,9 +98,6 @@ SEDATION_MV_ITEMIDS = [221385, 221623, 221668, 221712, 221744, 221833, 222168, 2
 # -- Barbiturates (deep sedation)
 # --   phenobarbital               - CV: 41733
 # --   pentobarbital               - CV: 42596 | MV: 225156
-
-# SEDATION_CV_ITEMIDS = [30131, 30124, 30166, 30121]
-# SEDATION_MV_ITEMIDS = [222168, 225150, 221385, 221668]
 
 # Regular expression pattern to identify antibiotic medications
 # Covers major antibiotic classes: beta-lactams, aminoglycosides, fluoroquinolones, etc.
@@ -230,11 +226,16 @@ STATIC_SQL = f"""
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_cv_itemids)
               AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+              -- SAFETY CHECK: Ensure drug was actually given (rate > 0 or amount > 0)
+              AND (ie.rate > 0 OR ie.amount > 0)
         ) OR EXISTS (
             SELECT 1 FROM inputevents_mv ie 
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_sed_mv_itemids)
               AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+              -- SAFETY CHECK: MetaVision uses 'statusdescription' usually, but amount check is safer
+              AND (ie.rate > 0 OR ie.amount > 0)
+              AND ie.statusdescription != 'Rewritten' -- Ignore error/rewritten rows in MV
         ) THEN 1 ELSE 0 END AS received_sedation,
         -- Antibiotic administration: Check prescriptions using regex pattern matching
         CASE WHEN EXISTS (
