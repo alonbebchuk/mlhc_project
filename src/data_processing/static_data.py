@@ -68,8 +68,10 @@ RRT_CHART_ITEMIDS = [
 # RRT_CHART_ITEMIDS = [226499, 227357, 152, 224149, 582]
 
 # Vasopressor administration (cardiovascular and metavision systems)
-VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30128, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
-VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653, 221986]
+# VASOPRESSOR_CV_ITEMIDS = [30047, 30120, 30044, 30119, 30309, 30127, 30128, 30312, 30051, 42273, 42802, 30043, 30307, 30042, 30306, 30125]
+# VASOPRESSOR_MV_ITEMIDS = [221906, 221289, 221749, 222315, 221662, 221653, 221986]
+VASOPRESSOR_CV_ITEMIDS = ['30128', '30120', '30043', '30051', '30125', '30119', '30042', '30307', '30047', '30127', '30306', '30044', '30309', '42273', '42802']
+VASOPRESSOR_MV_ITEMIDS = ['221749', '221906', '221662', '221289', '221986', '222315', '221653']
 # --  List of vasopressor administration drugs:
 # --  norepinephrine - 30047,30120,221906
 # --  epinephrine - 30044,30119,30309,221289
@@ -214,11 +216,14 @@ STATIC_SQL = f"""
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_cv_itemids)
               AND ie.charttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+              AND (ie.rate > 0 OR ie.amount > 0)
         ) OR EXISTS (
             SELECT 1 FROM inputevents_mv ie 
             WHERE ie.hadm_id = a.hadm_id 
               AND ie.itemid::INTEGER IN (SELECT itemid FROM tmp_vaso_mv_itemids)
               AND ie.starttime::TIMESTAMP BETWEEN a.admittime::TIMESTAMP AND a.admittime::TIMESTAMP + INTERVAL {WINDOW_HOURS} HOURS
+              AND (ie.rate > 0 OR ie.amount > 0)
+              AND ie.statusdescription != 'Rewritten'
         ) THEN 1 ELSE 0 END AS received_vasopressor,
         -- Sedation administration: Check both CareVue and MetaVision systems
         CASE WHEN EXISTS (
